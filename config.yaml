@@ -1,0 +1,23 @@
+# claude_agent_lab — non-secret runtime configuration.
+#
+# Secrets (API keys) never go here — this file is checked into git. Put them
+# in .env instead (see .env.example).
+#
+# Any value below can be overridden without editing this file, via an
+# AGENT_LAB_<SECTION>_<FIELD> environment variable, e.g. AGENT_LAB_LLM_MODEL.
+
+llm:
+  provider: anthropic
+  model: claude-opus-5
+  max_tokens: 16000
+
+embedding:
+  # "fake"  — deterministic, no API key, no network. Default so the CLI runs
+  #           with zero setup. Not semantically meaningful — dev/test only.
+  # "voyage" — Anthropic's recommended embeddings partner (Anthropic doesn't
+  #            serve first-party embeddings). Needs VOYAGE_API_KEY in .env.
+  #            Not exercised by any real retrieval path yet — that's Phase 2.
+  provider: fake
+  model: voyage-3.5
+
+log_level: INFO
