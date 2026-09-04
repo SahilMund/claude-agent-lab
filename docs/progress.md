@@ -136,61 +136,63 @@ sequenceDiagram
 
 ### Interview questions
 
+Question-only — meant as prompts to answer out loud or in writing, not a Q&A key.
+
 **Config & settings**
-1. Why does this project merge config manually instead of relying on `pydantic-settings`' built-in source precedence?
-2. Walk through what happens if the same field is set in both `config.yaml` and as an `AGENT_LAB_*` env var. Which wins, and where in the code is that decided?
-3. Why is `get_settings` decorated with `@lru_cache`, and what would break in a test suite that didn't call `get_settings.cache_clear()` between tests that mutate `os.environ`?
-4. Why does `config.yaml` never contain API keys, and where do they come from instead?
-5. What happens if `config.yaml` is deleted entirely? Trace the code path.
-6. What happens if `config.yaml` contains a YAML list at the top level instead of a mapping?
-7. Why is `.env` loaded via `load_dotenv()` before reading `AGENT_LAB_*` overrides, rather than after?
-8. If you needed to add a new overridable field (say, `llm.temperature`), what three places would you need to touch?
-9. Why does `_apply_env_overrides` mutate and return the same dict rather than building a new one?
-10. What's the risk of using `os.environ[env_var]` (a string) directly as a value for a field typed `int` in Pydantic, and why does it work here?
-11. Why are secrets stored on the `Settings` model as `str | None` instead of raising immediately if unset?
-12. How would you support per-environment config (dev/staging/prod) with this design without changing its shape?
+1. Why is the config merged by hand in this code instead of just using `pydantic-settings`' built-in merging?
+2. If the same setting is in both `config.yaml` and an `AGENT_LAB_*` env var, which one wins — and where in the code decides that?
+3. Why does `get_settings()` cache its result with `@lru_cache`? What could go wrong in tests if you forgot to clear that cache?
+4. Why is `config.yaml` never allowed to hold API keys? Where do those come from instead?
+5. What happens if you delete `config.yaml` entirely — does the app still start?
+6. What happens if someone writes a YAML list at the top of `config.yaml` instead of key-value pairs?
+7. Why must `.env` get loaded before the `AGENT_LAB_*` env var overrides are read?
+8. If you wanted to add a new setting (say `llm.temperature`), what three places in the code would you need to touch?
+9. Why does the env-override function change the same dictionary in place instead of building a new one?
+10. Env vars are always strings. How does an env var like `"16000"` end up as the integer `16000` on the `Settings` object?
+11. Why are API keys allowed to be empty/missing on the `Settings` object instead of the app crashing immediately if they're not set?
+12. How would you support separate dev/staging/prod configs without changing this design?
 
 **LLM/Embedder factory & protocols**
-13. Why are `LLMClient` and `Embedder` defined as `typing.Protocol` instead of `abc.ABC`? What's the practical difference at runtime?
-14. What would `isinstance(client, LLMClient)` do, and would it work without `@runtime_checkable`?
-15. Why does the factory take a `Settings` object rather than individual keyword arguments like `model: str, max_tokens: int`?
-16. What is the single responsibility of `factory.py`, and why is it kept separate from the provider implementation modules?
-17. If you added an OpenAI-backed `LLMClient`, what exactly would you need to change, and what would you *not* need to change?
-18. Why does `AnthropicLLMClient.__init__` special-case `api_key=None` instead of always passing `api_key=api_key`?
-19. What does a bare `anthropic.Anthropic()` do when no `ANTHROPIC_API_KEY` is set but an `ant auth login` profile exists?
-20. Why is the no-credentials failure a bare `TypeError` rather than an `anthropic.AuthenticationError`, and how does `AnthropicLLMClient.complete` handle that?
-21. Why catch `AuthenticationError`, `PermissionDeniedError`, `NotFoundError`, `RateLimitError`, `APIConnectionError`, and `APIStatusError` as a most-specific-first chain instead of one `except anthropic.APIStatusError`?
-22. What does the SDK's automatic retry (`max_retries`, default 2) cover, and which exceptions in the chain above would never be reached because the SDK already retried and gave up?
-23. Why does `complete()` join only `block.type == "text"` blocks instead of assuming `response.content[0].text`?
-24. What real semantic guarantee does `FakeEmbedder` provide, and what would break if RAG code in Phase 2 accidentally shipped with it as the default?
-25. Why is `voyageai` imported inside `VoyageEmbedder.__init__` instead of at module level?
-26. Why does `VoyageEmbedder` pass `input_type="document"` — what's the corresponding value for query-time embeddings, and why would getting this wrong degrade retrieval quality later?
-27. This phase claims `VoyageEmbedder` is "implemented but not verified." What's the actual risk of shipping unverified provider code, and how should Phase 2 close that gap?
+13. What's the real difference between `typing.Protocol` and `abc.ABC`, and why did this project pick `Protocol`?
+14. Would `isinstance(client, LLMClient)` work as written? What would need to change for it to?
+15. Why does the factory take the whole `Settings` object instead of separate arguments like `model` and `max_tokens`?
+16. What's the one job of `factory.py`, and why isn't that logic mixed into the provider files themselves?
+17. If you added a second LLM provider (say OpenAI), which files would you touch, and which would you never need to open?
+18. Why does the Anthropic client only pass an API key explicitly when one is given, instead of always passing it?
+19. If `ANTHROPIC_API_KEY` isn't set but the machine is logged in via `ant auth login`, does the Anthropic client still work?
+20. When there are no credentials at all, the SDK doesn't raise a normal Anthropic error — it raises a plain `TypeError`. How does this project catch that so it doesn't crash the app?
+21. Why does the code catch six different Anthropic error types separately instead of one broad "something went wrong" catch?
+22. The SDK already retries failed requests automatically. Which of those six error types would you basically never see in practice, because the SDK gave up before your code ever ran?
+23. Claude's response can contain more than one type of content block. Why does the code only join the "text" ones instead of grabbing the first block?
+24. `FakeEmbedder` returns numbers, but not meaningful ones. What would actually break if a real search feature used it by mistake?
+25. Why is the `voyageai` library imported inside the class instead of at the top of the file?
+26. `VoyageEmbedder` tells the API it's embedding a "document." What would you pass instead when embedding a user's search query, and why does mixing the two hurt search quality?
+27. This project admits `VoyageEmbedder` has never been tested against a real account. Why write it now instead of waiting, and what's the risk of leaving it untested?
 
 **CLI / REPL skeleton**
-28. Why does the REPL `pop()` the just-appended user message from `history` when `complete()` raises, instead of leaving it in place?
-29. What conversation-history bug would appear after several failed turns if that `pop()` were removed?
-30. Why is `history: list[ChatMessage]` kept in a local variable in `run_repl()` instead of a module-level global?
-31. What happens to `history` when the process exits — where does Phase 4 (session memory) plug in to change that?
-32. Why does `run_repl()` catch a broad `Exception` around `get_llm_client(settings)` but a narrow `RuntimeError` around `client.complete(...)`?
-33. Why handle `EOFError` and `KeyboardInterrupt` together in the input loop?
-34. The API is documented as stateless — the full message history is resent every turn. What's the cost implication of that as a conversation grows, and which later phase addresses it?
-35. Why is the system prompt a module-level constant rather than something loaded from `config.yaml`?
+28. If the AI call fails, the code removes the user's last message from history before continuing. Why?
+29. What would go wrong with the conversation after a few failed messages if that removal step didn't happen?
+30. Why does the conversation history live inside the `run_repl()` function instead of as a global variable?
+31. What happens to the conversation history the moment you close the app? Which future phase is meant to fix that?
+32. Building the AI client can fail in almost any way, so the code catches a broad `Exception` there — but only a specific `RuntimeError` around the actual chat call. Why the difference?
+33. Why are "user pressed Ctrl+C" and "user closed the input stream" handled by the same piece of code?
+34. Every chat turn resends the entire conversation so far to the API. Why, and what does that mean for cost as a conversation gets longer?
+35. Why is the system prompt hardcoded in the code instead of being a setting in `config.yaml`?
 
 **Observability**
-36. Why is `configure_logging()` written to be idempotent (a no-op after the first call)?
-37. What would go wrong if two different entry points both called `logging.basicConfig()` with different formats and neither guarded against double-configuration?
-38. Why does `get_logger(name)` namespace under `claude_agent_lab.` instead of returning `logging.getLogger(name)` directly?
-39. What's deliberately *not* built in this phase's logger (structured fields, external sinks, request IDs), and why is that deferred to Phase 7 rather than done now?
+36. Why is `configure_logging()` written so that calling it twice does nothing the second time?
+37. What would go wrong if two different parts of the app each set up logging separately, with different formats, and neither checked whether logging was already set up?
+38. Why do all the app's loggers get names like `claude_agent_lab.main` instead of just `main`?
+39. What's deliberately missing from this logger compared to a production-grade setup, and why is that okay for now?
 
 **Packaging & project structure**
-40. Why does `pyproject.toml` declare `packages = [{include = "claude_agent_lab"}]` explicitly instead of relying on Poetry's default package discovery?
-41. What would change about imports and tooling if this project used a `src/` layout instead of the flat layout it actually uses?
-42. Why is `anthropic` pinned as `>=1.0.0,<2.0.0` rather than an unbounded `*` or an exact pin?
-43. What's the purpose of the `[tool.poetry.scripts]` entry point (`claude-agent-lab = "claude_agent_lab.main:main"`), and how does it differ from running `python -m claude_agent_lab.main`?
-44. Why is `voyageai` a hard dependency in `pyproject.toml` even though `config.yaml` defaults to not using it at all?
+40. Why does `pyproject.toml` explicitly list which folder is the package instead of letting Poetry guess?
+41. What would have to change about how imports work if this project used a `src/` folder instead of putting the package at the repo root?
+42. Why is the `anthropic` library pinned to "1.x, but not 2.x yet" instead of just "any version"?
+43. What's the difference between running `claude-agent-lab` (the installed command) and running `python -m claude_agent_lab.main` directly?
+44. `voyageai` is a required dependency even though the app doesn't use it by default. Is that a problem, and why or why not?
 
-**Design tradeoffs / whole-system**
-45. If Phase 3 needs streaming responses instead of a single joined string, what would have to change in `LLMClient`, and would that change ripple into `main.py`?
-46. Given the stated goal of this project (deeply understanding each subsystem, not just shipping features), what's one place in this phase where a "just use the library's default behavior" shortcut was deliberately avoided, and why?
-47. What's the blast radius of adding a second LLM provider (e.g. a local model via Ollama) — which files change, and which stay untouched because of how the factory is structured?
+**Design tradeoffs / whole system**
+45. If a future phase needs streaming replies instead of one full response at a time, what would have to change in the `LLMClient` interface, and would `main.py` need to change too?
+46. Point to one spot in this phase where the "just use the library's default" shortcut was deliberately avoided in favor of writing it out by hand. Why was that worth the extra work?
+47. If you added a second AI provider tomorrow, how many files would actually need to change, and why so few?
