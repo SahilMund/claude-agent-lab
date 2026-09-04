@@ -1,0 +1,4 @@
+# Local-only files — not pushed to GitHub
+docs/PROMPTS.md
+.claude/settings.json
+CLAUDE.md
