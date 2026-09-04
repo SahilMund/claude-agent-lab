@@ -4,7 +4,7 @@ One entry per phase/session. Each entry stays self-contained enough that a reade
 
 ---
 
-## Phase 1, Day 1 — Config system, LLM/embedder factory, logger, CLI skeleton
+## Phase 1 — Config system, LLM/embedder factory, logger, CLI skeleton
 
 **Branch:** `phase-1-foundations` (off `main`)
 **Date:** 2026-09-05
