@@ -9,6 +9,17 @@ One entry per phase/session. Each entry stays self-contained enough that a reade
 **Branch:** `phase-1-foundations` (off `main`)
 **Date:** 2026-09-05
 
+### In plain terms
+
+This session built the "plumbing" the whole project stands on — nothing user-facing yet, just the pieces every later feature will plug into:
+
+- **A settings file** (`config.yaml`) that says which AI model to use, plus a `.env` file (kept private, never uploaded to GitHub) that holds the actual API key. You can change the model or turn on more logging just by editing `config.yaml` — no code changes needed.
+- **A "factory"** — one function you call to get an AI chat client, and one function to get a text-embedding client (embeddings turn text into a list of numbers so a computer can compare meanings later — that's for search, in Phase 2). Today this factory only knows how to build Anthropic's Claude client for chat, and a fake stand-in for embeddings so nothing costs money or needs a second API key yet.
+- **A simple logger** — so the app can print timestamped status/error lines instead of nothing at all.
+- **A chat loop (REPL)** — run the program, type a message, get Claude's reply back, type `/exit` to quit. That's it — no memory beyond the current run, no tools, no "agent" behavior yet. It exists purely to prove the settings file and the factory actually work together with a real API call.
+
+Think of this phase as building a car's chassis and wiring harness before any of the actual driving features (RAG search, task planning, etc.) get bolted on in later phases.
+
 ### What changed
 
 This is the first working slice of the project: everything downstream (RAG, agent orchestration, memory, MCP, task planning) will sit on top of the three pieces built here.
@@ -27,6 +38,7 @@ This is the first working slice of the project: everything downstream (RAG, agen
 ### Architecture decisions
 
 **1. How should config precedence work?**
+- *In plain terms:* If a setting is defined in more than one place (the checked-in `config.yaml`, a private `.env` file, or an environment variable), which one wins? We picked a simple, memorable rule: environment variable beats `.env` file beats `config.yaml` beats the code's built-in default. Secrets (API keys) are never allowed in `config.yaml` at all, since that file gets pushed to GitHub.
 - *Problem:* Need non-secret settings versioned in git (so `git blame` shows who changed a default and why) while secrets never touch a tracked file, and while still letting a developer override anything locally without editing the checked-in file.
 - *Options considered:*
   a. `pydantic-settings`' `BaseSettings` with a custom YAML settings source, relying on its built-in source-precedence/merge behavior.
@@ -36,6 +48,7 @@ This is the first working slice of the project: everything downstream (RAG, agen
 - *Tradeoff:* Loses `pydantic-settings`' automatic nested-env-var merging and its dotenv integration niceties, and duplicates a little of what that library provides. In exchange, precedence is fully readable from `_apply_env_overrides` — no need to know the library's internal source-ordering rules to answer "where did this value come from," which matters for a project whose stated goal (`docs/prd.md`) is understanding each layer, not just using it. (c) was rejected because secrets and non-secret defaults have different git-tracking requirements and shouldn't share a file.
 
 **2. Where do embeddings come from, given Anthropic doesn't serve them?**
+- *In plain terms:* Anthropic (the company behind Claude) doesn't offer its own text-embedding service, so we need a second provider for that later. Rather than force everyone to sign up for a second API just to run this early skeleton, the default is a "fake" embedder that makes up numbers locally — good enough to prove the plumbing works, useless for real search. The real provider (Voyage AI) is written and ready, just switched off by default until Phase 2 actually needs it.
 - *Problem:* Phase 1 needs a working `Embedder` factory, but Anthropic has no first-party embeddings endpoint, and nothing in Phase 1 actually calls an embedder yet.
 - *Options considered:*
   a. Skip the embedder factory entirely until Phase 2 needs it.
@@ -46,6 +59,7 @@ This is the first working slice of the project: everything downstream (RAG, agen
 - *Open item:* `VoyageEmbedder` is written against the documented `voyageai` client shape but has not been run against a live Voyage account. Flagging here rather than fabricating a "verified" claim — first real exercise happens when Phase 2 wires retrieval to it.
 
 **3. Protocols vs. ABCs for `LLMClient`/`Embedder`?**
+- *In plain terms:* We wanted a clear "shape" that any AI provider's client must match (a `.complete(...)` method for chat, an `.embed(...)` method for embeddings), so the rest of the app doesn't care which provider it's talking to. Python offers two ways to define that shape; we picked the more relaxed one (`Protocol`) over the stricter one (`ABC`) — see the tradeoff below.
 - *Problem:* Need an interface the factory can return and later phases (agent orchestrator, retrievers) can depend on, without hard-coupling every provider implementation to a base class.
 - *Options considered:* `abc.ABC` with `@abstractmethod`, vs. `typing.Protocol` (structural typing).
 - *What was chosen:* `Protocol`.
