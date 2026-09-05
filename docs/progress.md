@@ -196,3 +196,166 @@ Question-only — meant as prompts to answer out loud or in writing, not a Q&A k
 45. If a future phase needs streaming replies instead of one full response at a time, what would have to change in the `LLMClient` interface, and would `main.py` need to change too?
 46. Point to one spot in this phase where the "just use the library's default" shortcut was deliberately avoided in favor of writing it out by hand. Why was that worth the extra work?
 47. If you added a second AI provider tomorrow, how many files would actually need to change, and why so few?
+
+---
+
+## Phase 2 — Code-aware chunking (tree-sitter)
+
+**Branch:** `phase-2-rag-core` (off `main`)
+**Date:** 2026-09-05
+
+### In plain terms
+
+Before this project can answer questions about its own codebase (that's the whole point of "RAG" — Retrieval-Augmented Generation), it first needs to break source files into bite-sized, meaningful pieces. That's what this slice does, and nothing more yet — no search, no storage, no AI calls involved.
+
+Think of it like preparing a cookbook for a librarian to file: instead of chopping every page into equal-sized blocks (which might cut a recipe in half), you split it at natural boundaries — one recipe per card. Here, "recipe" means "one function" or "one class." For Python files, this code reads the actual structure of the code (using a library called tree-sitter, which understands Python's grammar) and slices at function and class boundaries, so each chunk is a complete, sensible unit. For any file type it doesn't understand yet, it falls back to just cutting fixed-size, slightly overlapping blocks of lines — cruder, but never crashes.
+
+Nothing outside `claude_agent_lab/rag/chunking.py` calls this yet. The next slices in this phase turn these chunks into embeddings (using the factory built in Phase 1) and store/search them — that's the "indexing" and "retrieval" pieces the PRD calls out separately.
+
+### What changed
+
+- **Chunking module** (`claude_agent_lab/rag/chunking.py`):
+  - `Chunk` — a frozen dataclass: `file_path`, `kind` (`"function" | "class" | "module" | "lines"`), `symbol` (function/class name, or `None`), `start_line`/`end_line` (1-indexed, inclusive), `text`.
+  - `Chunker` — a `Protocol` (same pattern as `llm/base.py`'s `LLMClient`/`Embedder`) with one method: `chunk(file_path, source) -> list[Chunk]`.
+  - `PythonChunker` — parses Python with `tree-sitter` + `tree-sitter-python`, walks the top-level nodes of the file, and emits one chunk per top-level `function_definition`/`class_definition`/`decorated_definition`, grouping everything else (imports, constants, bare statements) into `"module"`-kind filler chunks between them.
+  - `FallbackChunker` — fixed-size, overlapping line-window chunker for every file `PythonChunker` doesn't apply to.
+  - `get_chunker_for_path(path, ...)` — picks a chunker by file extension (`.py` → `PythonChunker`, everything else → `FallbackChunker`).
+  - `chunk_file(path, ...)` — reads a file and returns its chunks; raises a clear `ValueError` if the file isn't valid UTF-8 text instead of an opaque decode traceback.
+- **Config**: new `ChunkingConfig` section (`fallback_window_lines`, `fallback_overlap_lines`) in `config.py`/`config.yaml`, wired into the existing env-override mechanism (`AGENT_LAB_CHUNKING_FALLBACK_WINDOW_LINES` etc.) — no new merge logic needed, this phase just adds fields to what Phase 1 already built.
+- **Dependencies**: `tree-sitter`, `tree-sitter-python` added to `pyproject.toml`.
+- **Tests**: `tests/test_chunking.py` — first test file in the project. Covers definition splitting, decorator handling, exact-text preservation, empty files, a malformed-syntax file (tree-sitter doesn't raise on bad syntax; this is checked directly), the fallback chunker's window math, and reading a real file end to end via `chunk_file`.
+- **Docs**: this entry, and `README.md`'s Status/Limitations/Roadmap.
+
+### Architecture decisions
+
+**1. Chunk at syntax boundaries, or just cut fixed-size blocks?**
+- *In plain terms:* Cutting code every N lines is simple but dumb — it can slice a function in half, which makes that chunk useless for search later. Reading the code's actual structure and cutting between functions/classes instead keeps each piece meaningful, at the cost of needing a per-language parser.
+- *Problem:* Need chunks that are small enough to embed and retrieve individually, but each one should still make sense on its own.
+- *Options considered:*
+  a. Fixed-size line or character windows everywhere (simple, language-agnostic, but can split a function or class in half).
+  b. Syntax-aware chunking via a real parser (tree-sitter) for languages it's worth investing in, fixed-size windows as a fallback for everything else.
+  c. Whole-file chunks (one chunk per file, no splitting at all).
+- *What was chosen:* (b).
+- *Tradeoff:* Needs a parser and a grammar per language chunked syntax-aware — real setup cost, and only Python has that today. (c) was rejected outright: a whole file is too large and too unfocused a unit for a search result to be useful. (a) stays as the fallback because it's the only option that works for a language with no parser wired up yet, and it's better than refusing to chunk the file at all.
+
+**2. `tree-sitter` vs. Python's own `ast` module for parsing Python?**
+- *In plain terms:* Python already ships a built-in way to read its own code's structure (the `ast` module) — so why bring in an external parser at all? Because this project's stated goal is multi-language code chunking eventually, and `ast` only ever understands Python.
+- *Problem:* Need to walk a Python file's structure to find function/class boundaries — `ast` can do exactly that with zero extra dependencies.
+- *Options considered:*
+  a. Python's built-in `ast` module.
+  b. `tree-sitter` + the `tree-sitter-python` grammar package.
+  c. Regex-based heuristics (match `^def `/`^class ` at the start of a line).
+- *What was chosen:* (b) — matches `docs/prd.md`'s explicit call for "tree-sitter-based code-aware chunking."
+- *Tradeoff:* `ast` would have been simpler and dependency-free for Python alone, and would have raised a normal `SyntaxError` on bad input instead of silently producing an ERROR node. `tree-sitter` earns its cost two ways: it's error-tolerant (a file with a typo still parses into a tree, so chunking degrades instead of failing), and adding a second language later means adding one more grammar package (`tree-sitter-<language>`) and one more `Chunker` class — not a second, unrelated parsing library and a second code path. (c) was rejected — regex misses decorators, multi-line signatures, and nested definitions in ways that are easy to get subtly wrong.
+
+**3. One chunk per class, or split each method out separately?**
+- *In plain terms:* A class with ten methods could become one giant chunk (the whole class) or ten small ones (one per method). This slice picked "whole class," which is simpler but can produce a chunk too big to be a good search result for a large class.
+- *Problem:* Classes are a natural chunk boundary, but a large class can contain many independent, unrelated methods — bundling them into one chunk may bury what a search is actually looking for.
+- *Options considered:*
+  a. One chunk per top-level class (including every method inside it).
+  b. Split further: one chunk per method, plus a small chunk for the class's own body (docstring, class-level attributes).
+- *What was chosen:* (a), for this slice.
+- *Tradeoff:* Simpler code, and correct for small-to-medium classes (most of this project's own code so far). Large classes with many unrelated methods will produce one oversized, less-focused chunk — noted here as an open item rather than solved now, since it needs a real large class to test against, and Phase 2's later retrieval work will make the actual impact concrete (whether a chunk is "too big" is really an embedding/retrieval-quality question, not a chunking-in-isolation one).
+- *Open item:* Revisit method-level splitting once retrieval is in place and there's a real large class to measure retrieval quality against.
+
+### HLD — how this phase's concern would be designed from a blank page
+
+**Picking a chunker and chunking a file (decision logic):**
+
+```mermaid
+flowchart TD
+    Start([chunk_file called with a path]) --> Read["read the file as UTF-8 text"]
+    Read -- decode error --> Fail(["raise ValueError\n(not valid text)"])
+    Read -- ok --> Ext{"file extension\nis .py?"}
+    Ext -- yes --> PyChunk["PythonChunker:\nparse with tree-sitter"]
+    Ext -- no --> Fallback["FallbackChunker:\nfixed-size line windows"]
+    PyChunk --> Walk["walk top-level nodes"]
+    Walk --> IsDef{"node is a function/\nclass definition?"}
+    IsDef -- yes --> FlushPending["flush any pending\nnon-definition lines as\na 'module' chunk"]
+    FlushPending --> EmitDef["emit one chunk\n(kind=function/class)"]
+    EmitDef --> Walk
+    IsDef -- no --> Accumulate["add line to the\npending 'module' block"]
+    Accumulate --> Walk
+    Walk -- no nodes left --> FlushLast["flush any remaining\npending lines"]
+    FlushLast --> Return([list of Chunks])
+    Fallback --> Windows["slice into windows of N lines\nwith overlap of M lines"]
+    Windows --> Return
+```
+
+**Data flow (where this plugs into the rest of the system):**
+
+```mermaid
+flowchart LR
+    File["a source file\non disk"] --> ChunkFile["chunk_file()"]
+    ChunkFile --> Chunks["list of Chunk objects"]
+    Chunks -.->|"not built yet"| Embed["Embedder.embed(chunk.text)\n(Phase 2, next slice)"]
+    Embed -.-> Store["vector store\n(Phase 2, next slice)"]
+    Store -.-> Retrieve["retriever\n(Phase 2, next slice)"]
+```
+
+### LLD — classes/functions/data flow introduced this phase
+
+| Module | Symbol | Responsibility |
+|---|---|---|
+| `rag/chunking.py` | `Chunk` (frozen dataclass) | The unit of retrievable code: file path, kind, symbol name, line range, text |
+| `rag/chunking.py` | `Chunker` (`Protocol`) | `chunk(file_path, source) -> list[Chunk]` — the shape any chunker (Python-aware or fallback) must satisfy |
+| `rag/chunking.py` | `PythonChunker` | Parses Python with tree-sitter; splits at top-level `function_definition`/`class_definition`/`decorated_definition`, groups the rest into `"module"` chunks |
+| `rag/chunking.py` | `_definition_kind_and_symbol(node)` | Resolves a definition node (unwrapping `decorated_definition` if needed) to `(kind, symbol_name)` |
+| `rag/chunking.py` | `FallbackChunker` | Fixed-size, overlapping line-window chunker for anything without a syntax-aware chunker |
+| `rag/chunking.py` | `get_chunker_for_path(path, ...)` | Extension-based dispatch: `.py` → `PythonChunker`, else → `FallbackChunker` |
+| `rag/chunking.py` | `chunk_file(path, ...)` | Reads a file, dispatches to the right chunker, returns its chunks |
+| `config.py` | `ChunkingConfig` | `fallback_window_lines`, `fallback_overlap_lines` — only consulted by `FallbackChunker` |
+
+**Data flow:** a file path → `chunk_file()` → `get_chunker_for_path()` picks `PythonChunker` or `FallbackChunker` → that chunker's `.chunk()` walks the parsed tree (or line list) → a `list[Chunk]`. Nothing downstream exists yet — embedding and storing these chunks is the next slice in this phase.
+
+### Interview questions
+
+Question-only — meant as prompts to answer out loud or in writing, not a Q&A key.
+
+**Chunk data model**
+1. Why is `Chunk` a frozen dataclass instead of a plain dict or a mutable class?
+2. Why does `Chunk` store both `start_line` and `end_line` instead of just the chunk's text?
+3. Why are `start_line`/`end_line` 1-indexed when tree-sitter itself reports 0-indexed row numbers internally?
+4. What does `symbol` mean for a `"module"`-kind chunk, and why is it allowed to be `None`?
+5. Why is `kind` a plain string (`"function"`, `"class"`, `"module"`, `"lines"`) instead of an enum?
+
+**PythonChunker / tree-sitter**
+6. Why does `PythonChunker` rebuild chunk text by slicing `source.splitlines()` using line numbers, instead of reading the text directly off the tree-sitter node?
+7. What is a `decorated_definition` node, and why does the chunker need to special-case it instead of just checking for `function_definition`/`class_definition`?
+8. If a function has two stacked decorators, does the chunk include both? Where in the code guarantees that?
+9. Why does chunking a file with a syntax error still return chunks instead of raising an exception?
+10. What would tree-sitter do differently from Python's own `ast` module when given a file with a typo in it?
+11. Why is only the *top level* of the file walked (`tree.root_node.children`) instead of every node in the tree?
+12. What happens to a bare top-level `if __name__ == "__main__":` block — which kind of chunk does it end up in, and why?
+13. Why does the chunker group consecutive non-definition lines into one `"module"` chunk instead of emitting one chunk per line?
+14. Trace what `flush()` does and why it's a closure defined inside `chunk()` instead of a separate method.
+15. What would go wrong if `flush()` didn't check `if text.strip()` before appending a chunk?
+16. Why is a new `Parser` created in `PythonChunker.__init__` instead of a fresh one per `chunk()` call?
+17. What's the risk of chunking a very large single function (say, 2,000 lines) with this approach, and does this module do anything about it?
+
+**FallbackChunker**
+18. Why does `FallbackChunker` require `overlap_lines` to be smaller than `window_lines`, and what would happen if it allowed `overlap_lines >= window_lines`?
+19. What is the *purpose* of the overlap between windows — what problem does it solve for retrieval later?
+20. Given `window_lines=10` and `overlap_lines=2`, why does the step between window starts work out to 8, not 10?
+21. Why does the last window potentially return fewer lines than `window_lines`, and how does the loop know to stop there?
+22. Why does an empty source file return an empty list instead of one empty chunk?
+
+**Dispatch, config, and file reading**
+23. Why does file-type dispatch happen by extension (`.py`) rather than by trying to parse and falling back on failure?
+24. If you added a `JavaScriptChunker`, what exactly would need to change in `get_chunker_for_path`, and what would stay the same?
+25. Why does `chunk_file` catch `UnicodeDecodeError` and re-raise it as a `ValueError` instead of letting the original exception propagate?
+26. Why do `fallback_window_lines`/`fallback_overlap_lines` live in `config.yaml` under a `chunking` section instead of being hardcoded constants in `chunking.py`?
+27. Does `ChunkingConfig` affect how a `.py` file gets chunked at all? Why or why not?
+
+**Testing**
+28. Why does the test suite assert on the exact chunk text (`foo_chunk.text == "def foo(x):\n    return x + 1"`) instead of just checking the chunk count?
+29. Why is there a dedicated test for a decorated function instead of assuming the definition-splitting test already covers it?
+30. Why does `test_python_chunker_degrades_gracefully_on_syntax_errors` only assert `assert chunks` (non-empty) instead of asserting exact chunk contents?
+31. What does `tmp_path` (used in `test_chunk_file_reads_and_chunks_a_real_file`) give a test that a hardcoded path to a file in the repo wouldn't?
+
+**Design tradeoffs / whole system**
+32. Why did this phase choose "whole class as one chunk" over "one chunk per method," and what real problem could that cause later?
+33. What's the actual cost of picking `tree-sitter` over Python's built-in `ast` module for a project that, right now, only chunks Python files?
+34. If chunking crashed on one bad file while processing a thousand files, what would you want the caller of `chunk_file` to be able to do — and does today's design support that?
+35. What exactly is *not* built yet that the PRD's Phase 2 row calls for (indexers, retrievers), and where would each one plug into this module's output?
+36. If two different chunkers (say, Python and a future JavaScript chunker) needed to share logic for grouping "module-level" filler code, where would you put that shared logic without both chunkers depending on each other?

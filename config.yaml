@@ -20,4 +20,11 @@ embedding:
   provider: fake
   model: voyage-3.5
 
+chunking:
+  # Only used for files without a syntax-aware chunker (anything but Python
+  # as of Phase 2 — see claude_agent_lab/rag/chunking.py). Ignored for .py
+  # files, which are always split at function/class boundaries instead.
+  fallback_window_lines: 60
+  fallback_overlap_lines: 10
+
 log_level: INFO
