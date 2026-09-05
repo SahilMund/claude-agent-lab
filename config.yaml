@@ -27,4 +27,19 @@ chunking:
   fallback_window_lines: 60
   fallback_overlap_lines: 10
 
+vector_store:
+  # Local, file-based Qdrant — no server to run. Swapping to a real Qdrant
+  # server later is a client-construction change (see rag/store.py), not a
+  # config shape change.
+  path: .agent_lab/qdrant
+  collection_name: claude_agent_lab
+
+retrieval:
+  # Reciprocal Rank Fusion constant for HybridRetriever. 60 is the
+  # literature default (tuned for large-scale search) — this project found
+  # it under-weights a clear keyword match at small corpus scale when
+  # semantic scores are noisy (see docs/progress.md). Worth re-tuning once
+  # a real embedder (not FakeEmbedder) is in use.
+  rrf_k: 60
+
 log_level: INFO

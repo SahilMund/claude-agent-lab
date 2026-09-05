@@ -359,3 +359,196 @@ Question-only — meant as prompts to answer out loud or in writing, not a Q&A k
 34. If chunking crashed on one bad file while processing a thousand files, what would you want the caller of `chunk_file` to be able to do — and does today's design support that?
 35. What exactly is *not* built yet that the PRD's Phase 2 row calls for (indexers, retrievers), and where would each one plug into this module's output?
 36. If two different chunkers (say, Python and a future JavaScript chunker) needed to share logic for grouping "module-level" filler code, where would you put that shared logic without both chunkers depending on each other?
+
+---
+
+## Phase 2 — Indexing & hybrid retrieval (Qdrant + BM25 + RRF)
+
+**Branch:** `phase-2-rag-core` (off `main`)
+**Date:** 2026-09-06
+
+### In plain terms
+
+The previous Phase 2 slice cut source files into chunks. This slice does the next two things the PRD asks for: **store** those chunks somewhere searchable, and **search** them.
+
+- **Storing (indexing):** each chunk's code gets turned into a vector (a list of numbers representing its meaning, via the embedder built in Phase 1) and saved into a small local database built for exactly this — a "vector database" called Qdrant. It runs embedded, right inside this app, with no separate server to install or run.
+- **Searching (retrieval):** two ways to search, and both matter:
+  - **Semantic search** — embed the question the same way, and find the chunks whose vectors are "closest" in meaning. Good for "how do we split a class into chunks" even if the code never says those exact words.
+  - **Hybrid search** — semantic search *plus* old-school keyword search (the same technique real search engines used before embeddings existed, called BM25), blended together. This matters because embeddings are surprisingly bad at exact names — if you search for `FakeEmbedder`, semantic search might not put the `FakeEmbedder` class first, but keyword search always will. Blending the two gets the best of both.
+
+Along the way, this slice ran into three real bugs during testing — not hypothetical ones, actually reproduced and fixed — which turned out to be the most instructive part of the work. They're written up below rather than glossed over, because the fixes (and the one open question this session couldn't fully close) are the actual engineering content of "indexing & retrieval," more so than the amount of code involved.
+
+### What changed
+
+- **`rag/store.py`** — `get_qdrant_client(path)`: the single place a Qdrant client gets constructed. Everything else (`Indexer`, `SemanticRetriever`, `HybridRetriever`) takes a client instance rather than a path — see Architecture Decision 2 below for why that's not just a style preference.
+- **`rag/indexer.py`** — `Indexer.index_chunks(chunks)`: embeds a batch of chunks and upserts them into a Qdrant collection. `chunk_point_id(chunk)`: derives a stable point ID from a chunk's identity (file + line range) so re-indexing the same chunk updates it in place instead of creating a duplicate.
+- **`rag/retriever.py`** — `SemanticRetriever` (vector search only) and `HybridRetriever` (semantic + BM25, merged by Reciprocal Rank Fusion). Both return `RetrievedChunk` (a chunk plus its match score).
+- **`rag/fusion.py`** — `rank_with_ties` and `reciprocal_rank_fusion`, pulled out as small, independently testable pure functions rather than inline logic in `HybridRetriever` (see Architecture Decision 4).
+- **Config**: new `VectorStoreConfig` (`path`, `collection_name`) and `RetrievalConfig` (`rrf_k`) sections, wired into the same env-override mechanism as every other config section.
+- **Dependencies**: `qdrant-client`, `rank-bm25`.
+- **`.gitignore`**: `.agent_lab/` (local Qdrant data — machine-specific, never committed).
+- **Tests**: `tests/test_indexer.py`, `tests/test_retriever.py`, `tests/test_fusion.py` — 20 new tests, several of them regression tests for bugs this session actually hit (not speculative edge cases).
+
+### Architecture decisions
+
+**1. Which vector database, and in what mode?**
+- *In plain terms:* Need somewhere to store the chunk vectors so they can be searched later. Picked Qdrant, running embedded inside the app itself (no server to set up) rather than a big always-on database.
+- *Problem:* Need a place to store vectors plus each chunk's metadata (file, line range, text) and search by similarity.
+- *Options considered:*
+  a. Qdrant, in local/embedded (file-based) mode — no server process, just a folder on disk.
+  b. Qdrant, running as a separate server (Docker or cloud).
+  c. A different vector database entirely (e.g. Chroma).
+- *What was chosen:* (a).
+- *Tradeoff:* Local mode can't be accessed by more than one process at a time (see Decision 2) and won't scale to a large, shared, multi-user index. In exchange, `poetry install` and go — nothing to run, nothing to configure, matching this project's zero-setup-by-default posture (`FakeEmbedder` for the same reason in Phase 1). Qdrant specifically (over (c)) follows this project's own `CLAUDE.md` naming convention, which already assumes Qdrant and a collection named `claude_agent_lab` — the reference project this rebuild studies from used Qdrant, so this isn't a fresh choice made in a vacuum. Switching to (b) later is a one-line change (`QdrantClient(url=...)` instead of `QdrantClient(path=...)`) since nothing outside `rag/store.py` constructs a client directly.
+
+**2. One shared client, or one per component?**
+- *In plain terms:* This one was discovered by testing, not designed up front — building an `Indexer` and a `SemanticRetriever` that each opened their own connection to the same local database crashed immediately with an error about the storage folder being locked.
+- *Problem:* `Indexer` and both retrievers all need to talk to the same Qdrant collection. The obvious design — let each one open its own client from a path — is what got tried first.
+- *Options considered:*
+  a. Each class constructs its own `QdrantClient(path=...)` internally.
+  b. Exactly one `QdrantClient` is constructed (via `get_qdrant_client`) and passed into every class that needs it.
+- *What was chosen:* (b) — after (a) was tried and reproducibly failed with `RuntimeError: Storage folder ... is already accessed by another instance of Qdrant client`.
+- *Tradeoff:* (b) means every caller has to thread a client through — mildly more setup code at the call site. In exchange, it's the only option that actually works with Qdrant's local mode, which locks its storage directory to a single open client per process. This is exactly the kind of thing worth verifying by running it rather than assuming a library "just works" the way its API shape suggests — see the interview questions below.
+
+**3. How to combine semantic and keyword search?**
+- *In plain terms:* Semantic search gives a "how similar is this, from 0 to 1" number; keyword search (BM25) gives a completely different kind of number that isn't on the same 0–1 scale at all. You can't just average them. Reciprocal Rank Fusion (RRF) sidesteps the problem by ignoring the actual numbers and looking only at *where something ranks* in each list.
+- *Problem:* Need one combined ranking from two signals whose raw scores aren't comparable.
+- *Options considered:*
+  a. Normalize both scores to a common scale (e.g. 0–1) and take a weighted average.
+  b. Reciprocal Rank Fusion (RRF) — combine by rank position, not raw score.
+  c. Qdrant's built-in native hybrid search (sparse + dense vectors combined server-side).
+- *What was chosen:* (b).
+- *Tradeoff:* RRF throws away information — it doesn't care *how much* better a rank-1 result is than rank-2, only that it's better. (a) preserves that information but requires picking a normalization scheme and a weight between the two signals, both of which are easy to get wrong and hard to justify without real tuning data. (c) was set aside for this slice: it means indexing sparse (keyword-style) vectors into Qdrant itself and learning a second, Qdrant-specific API surface, versus reusing a well-understood, standalone library (`rank_bm25`) — worth revisiting once there's a real corpus to tune against.
+
+**4. BM25 variant and tokenizer — two bugs found by testing, not by inspection**
+- *In plain terms:* Two things quietly didn't work the first time they were actually run against real code, not synthetic examples: (1) the classic BM25 formula can decide a word is worth *zero* points in a small enough set of documents, even when that word is the exact thing being searched for; (2) splitting text into words the simple way (on whitespace) glues punctuation onto code identifiers, so `needle_token(x):` never matches a search for `needle_token`.
+- *Problem:* Make BM25 keyword scoring actually recognize an exact identifier match in code, at the small corpus sizes this project realistically has.
+- *Options considered (tokenizer):* plain `str.split()` vs. a regex that extracts identifier-shaped tokens (letters/digits/underscore) and lowercases them.
+- *Options considered (BM25 variant):* `BM25Okapi` (the textbook version) vs. `BM25Plus` (adds a small constant that guarantees a document containing the query term always scores above one that doesn't, regardless of corpus size).
+- *What was chosen:* the regex tokenizer, and `BM25Plus`.
+- *Tradeoff:* The regex tokenizer doesn't split compound identifiers (`needle_token` stays one token, not `needle` + `token`) or handle camelCase — good enough to fix the reproduced bug, not a real code-aware tokenizer. `BM25Plus` costs nothing over `BM25Okapi` here (same library, same call shape) — there was no real downside to switching once the `BM25Okapi` failure was found. Both bugs were caught by actually running the code against a two-and-three-document test corpus and a real multi-file corpus, not by reading the libraries' documentation carefully enough beforehand — worth noting as its own lesson, not just a fix.
+
+**5. Reciprocal Rank Fusion's `k` constant — an open item, found on this project's own code**
+- *In plain terms:* Even after fixing the two bugs above, running hybrid search against several of this project's own real files with a made-up query showed the single best keyword match still didn't come out on top. That's not a leftover bug — it's `RRF`'s standard constant (`k=60`, built for large search engines with hundreds of results per list) barely mattering at this project's tiny scale (dozens of chunks) combined with `FakeEmbedder` giving a completely meaningless "semantic" ranking that can beat a real keyword match by pure chance.
+- *Problem:* `rrf_k=60` (the literature default) didn't let a reproducibly unambiguous BM25 rank-1 match win in a real, multi-file test — traced by hand to `k=60` making rank 1 and rank 23 (out of 28) barely different in fused score once `FakeEmbedder`'s noise happened to hand a competing chunk a lucky rank 1 in the semantic list.
+- *Options considered:* keep `k=60` (cite the literature); hardcode a smaller value found to "work" against this test; make `k` configurable and leave the real tuning for later.
+- *What was chosen:* keep `k=60` as the documented default, but make it configurable (`RetrievalConfig.rrf_k` / `AGENT_LAB_RETRIEVAL_RRF_K`) — and leave the actual value as an open item.
+- *Tradeoff:* Picking a "better" constant now would mean tuning against `FakeEmbedder`'s noise, which has no real semantic content — any number that happens to fix today's test case would be fitted to noise, not to how a real embedder actually behaves. That's worse than being honest that this needs re-tuning once Phase 2 (or a later phase) verifies a real embedder end to end, per the open item already flagged in Phase 1 for `VoyageEmbedder`. The fusion *logic* itself is verified correct and unit-tested independently of this tuning question (`tests/test_fusion.py`) — what's unresolved is a tuning parameter's value, not the algorithm.
+- *Open item:* Re-tune (or reconsider) `rrf_k` once a real embedder is wired in and there's a real corpus of queries with known right answers to test against.
+
+**6. Deterministic point IDs**
+- *In plain terms:* Every chunk stored in Qdrant needs an ID. Instead of a random one, this project derives the ID from the chunk's own identity (which file, which lines) — so indexing the same file twice updates the same entries instead of piling up duplicates.
+- *Problem:* Qdrant needs a point ID for every vector; re-running the indexer over an unchanged (or lightly edited) codebase shouldn't leave stale duplicate entries behind.
+- *Options considered:* a fresh random ID (`uuid4`) per chunk each time; a deterministic ID derived from the chunk's identity (`uuid5`, namespaced) that's stable across re-runs.
+- *What was chosen:* deterministic `uuid5`, keyed on `(file_path, start_line, end_line)` — not on the chunk's text.
+- *Tradeoff:* Keying on line range instead of text means a chunk whose *content* changed but whose *location* didn't (a docstring edit, say) correctly updates the same point. But it also means a chunk whose location shifted (an unrelated edit earlier in the file moved everything down by a few lines) gets treated as a brand-new point, leaving the old one stale until a full re-index cleans it up. There's no re-indexing/cleanup story yet — a real "watch the codebase and keep the index in sync" mechanism is out of scope for this slice (closer to Phase 7's file-watcher deliverable).
+
+### HLD — how this phase's concern would be designed from a blank page
+
+**Indexing a batch of chunks:**
+
+```mermaid
+flowchart TD
+    Chunks(["list of Chunks\n(from rag/chunking.py)"]) --> Empty{"empty list?"}
+    Empty -- yes --> Zero(["return 0,\nno embedder call"])
+    Empty -- no --> Embed["embedder.embed(\n[chunk.text for chunk in chunks])"]
+    Embed --> Exists{"collection\nalready exists?"}
+    Exists -- no --> Create["create it, sized to\nthis embedder's vector length"]
+    Exists -- yes --> IDs
+    Create --> IDs["derive each chunk's point ID\nfrom (file, start, end)"]
+    IDs --> Upsert["client.upsert(points)\n(same ID = update, not duplicate)"]
+    Upsert --> Done(["return count indexed"])
+```
+
+**Hybrid retrieval for one query:**
+
+```mermaid
+flowchart TD
+    Query(["query text"]) --> CheckColl{"collection\nexists?"}
+    CheckColl -- no --> Empty(["return []"])
+    CheckColl -- yes --> Scroll["fetch every point\nin the collection"]
+    Scroll --> Sem["embed the query,\nrank all points by similarity"]
+    Scroll --> BM["tokenize every chunk's text,\nscore with BM25Plus"]
+    Sem --> RankSem["rank_with_ties()\n(ties share a rank)"]
+    BM --> RankBM["rank_with_ties()"]
+    RankSem --> Fuse["reciprocal_rank_fusion(\n[semantic_ranks, bm25_ranks], k)"]
+    RankBM --> Fuse
+    Fuse --> Sort["sort by fused score,\ntake top_k"]
+    Sort --> Return(["list of RetrievedChunk"])
+```
+
+### LLD — classes/functions/data flow introduced this phase
+
+| Module | Symbol | Responsibility |
+|---|---|---|
+| `rag/store.py` | `get_qdrant_client(path)` | The one place a `QdrantClient` gets constructed — see Architecture Decision 2 |
+| `rag/indexer.py` | `Indexer.index_chunks(chunks) -> int` | Embeds and upserts a batch of chunks; returns how many were indexed |
+| `rag/indexer.py` | `chunk_point_id(chunk) -> str` | Deterministic point ID from `(file_path, start_line, end_line)` |
+| `rag/indexer.py` | `chunk_to_payload(chunk) -> dict` | The metadata stored alongside a chunk's vector |
+| `rag/retriever.py` | `RetrievedChunk` (frozen dataclass) | A chunk plus its match `score` |
+| `rag/retriever.py` | `SemanticRetriever.retrieve(query, top_k)` | Embed the query, vector-search, return ranked chunks |
+| `rag/retriever.py` | `HybridRetriever.retrieve(query, top_k)` | Semantic + BM25, merged via `rag/fusion.py` |
+| `rag/retriever.py` | `_tokenize(text)` | Identifier-shaped, lowercased tokens — the regex fix from Decision 4 |
+| `rag/fusion.py` | `rank_with_ties(scored_items)` | Competition ranking: tied scores share a rank |
+| `rag/fusion.py` | `reciprocal_rank_fusion(rankings, k)` | Combines several rank-only signals into one fused score per key |
+| `config.py` | `VectorStoreConfig`, `RetrievalConfig` | Qdrant path/collection name; RRF's `k` |
+
+**Data flow:** `chunk_file()` output → `Indexer.index_chunks()` → Qdrant collection ↔ `SemanticRetriever`/`HybridRetriever.retrieve()` → `list[RetrievedChunk]`. Nothing yet calls retrieval from the CLI — that's wiring `/ask`-style behavior into `main.py`, still ahead in this phase or the next.
+
+### Interview questions
+
+Question-only — meant as prompts to answer out loud or in writing, not a Q&A key.
+
+**Vector store & indexing**
+1. Why does this project run Qdrant embedded (file-based) instead of as a separate server?
+2. What specific error shows up if two `QdrantClient` instances open the same local storage path in the same process, and why does it happen?
+3. Why do `Indexer`, `SemanticRetriever`, and `HybridRetriever` all take a `client` parameter instead of each constructing their own?
+4. What would have to change in `rag/store.py` (and nowhere else) to point this project at a real, shared Qdrant server instead of local mode?
+5. Why is a chunk's point ID derived from `(file_path, start_line, end_line)` instead of from the chunk's own text?
+6. What happens if the same chunk (same file, same line range) is indexed twice with different text? Does Qdrant end up with one point or two?
+7. What real-world edit to a file would make `chunk_point_id` produce a *new* ID for a chunk that a person would still think of as "the same function"?
+8. Why does `Indexer.index_chunks` check `if not chunks: return 0` before calling the embedder at all?
+9. Why is the vector size for a new collection taken from the embedder's own output (`len(vectors[0])`) instead of a fixed constant?
+
+**Semantic retrieval**
+10. Why does `SemanticRetriever.retrieve` return an empty list instead of raising an error when the collection doesn't exist yet?
+11. What does "cosine similarity" actually measure, and why is it a reasonable choice for comparing two embedding vectors?
+12. If you swapped the embedding model for one with a different vector size, what would break, and where would the failure actually show up?
+
+**Hybrid retrieval & fusion**
+13. Why can't semantic similarity and a BM25 score just be added together directly?
+14. What does Reciprocal Rank Fusion actually look at — the score, or something else?
+15. Why does `rank_with_ties` give equal scores the same rank instead of just numbering them in whatever order they come out of `sorted()`?
+16. Concretely, what could go wrong in the fused ranking if ties were *not* handled specially?
+17. What does the `k` in `1 / (k + rank)` actually control, intuitively?
+18. Why does a bigger `k` make the fusion care less about the difference between rank 1 and rank 10?
+19. Why was `reciprocal_rank_fusion` pulled out into its own module (`fusion.py`) instead of staying as private logic inside `HybridRetriever`?
+20. What does a key missing from one of the two rankings contribute to that key's fused score?
+21. Trace what happens if `reciprocal_rank_fusion` is called with an empty list of rankings.
+
+**The BM25 bugs**
+22. What score does the classic `BM25Okapi` formula give a word that appears in exactly one of two documents, and why?
+23. Why does `BM25Plus` avoid that zero-score problem that `BM25Okapi` has?
+24. What does `"needle_token(x, y):".split()` actually produce, and why does that break keyword search for the identifier `needle_token`?
+25. Why does the fix use a regex that matches identifier-shaped substrings instead of just splitting on more punctuation characters?
+26. What real limitation does the current tokenizer still have — could it find a match for `needleToken` if the codebase used camelCase instead of snake_case?
+27. Why does this project have a dedicated unit test for `_tokenize` in isolation, separate from any test that exercises the full `HybridRetriever`?
+
+**The rrf_k open item**
+28. In the real multi-file test that motivated this open item, why did a chunk with a clearly *worse* keyword match end up ranked above the one clear best keyword match?
+29. Why does `FakeEmbedder` make this specific problem worse than a real embedder would?
+30. Why wasn't `rrf_k` just changed to whatever value made that one test case pass?
+31. What would you need in order to properly tune `rrf_k` for this project, that this session didn't have?
+32. Where does `rrf_k` live so it can be changed without touching code, and what env var would you set to try `rrf_k=10` locally?
+
+**Testing**
+33. Why does `tests/test_fusion.py` test the fusion math with plain dictionaries of ranks, instead of going through `HybridRetriever` and a real Qdrant collection?
+34. Why does the "hybrid improves rank" test assert a relative claim (rank improves) instead of an absolute one (the keyword match becomes #1)?
+35. What was actually wrong with the first version of that test, before it was rewritten?
+36. Why do `tests/test_indexer.py`'s multi-chunk tests give each chunk a different `start_line`, and what bug does forgetting that reproduce?
+
+**Design tradeoffs / whole system**
+37. What's still missing from this slice that the PRD's Phase 2 row asked for, if anything?
+38. If the codebase this project indexes grew to 50,000 files, which specific design decision from this slice would break first?
+39. Where would you plug in "re-index only the files that changed" without redesigning `Indexer` itself?
+40. If you had to explain to someone why "hybrid search" isn't automatically better than semantic search alone, what would you point to from this session's own findings?

@@ -6,6 +6,9 @@ CLAUDE.md
 # Secrets
 .env
 
+# Local runtime data (vector store, etc.)
+.agent_lab/
+
 # Python
 __pycache__/
 *.pyc

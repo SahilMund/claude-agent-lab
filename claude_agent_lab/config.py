@@ -43,6 +43,9 @@ _ENV_OVERRIDES: dict[str, tuple[str | None, str]] = {
     "EMBEDDING_MODEL": ("embedding", "model"),
     "CHUNKING_FALLBACK_WINDOW_LINES": ("chunking", "fallback_window_lines"),
     "CHUNKING_FALLBACK_OVERLAP_LINES": ("chunking", "fallback_overlap_lines"),
+    "VECTOR_STORE_PATH": ("vector_store", "path"),
+    "VECTOR_STORE_COLLECTION_NAME": ("vector_store", "collection_name"),
+    "RETRIEVAL_RRF_K": ("retrieval", "rrf_k"),
     "LOG_LEVEL": (None, "log_level"),
 }
 
@@ -75,10 +78,37 @@ class ChunkingConfig(BaseModel):
     fallback_overlap_lines: int = 10
 
 
+class VectorStoreConfig(BaseModel):
+    """Where indexed chunks live. Local (embedded, file-based) Qdrant by
+    default — see claude_agent_lab/rag/store.py."""
+
+    path: str = ".agent_lab/qdrant"
+    collection_name: str = "claude_agent_lab"
+
+
+class RetrievalConfig(BaseModel):
+    """Hybrid retrieval tuning.
+
+    `rrf_k=60` is the textbook Reciprocal Rank Fusion constant (Cormack,
+    Clarke & Buettcher 2009), tuned for large-scale search. This project's
+    own testing (see docs/progress.md) found it doesn't reliably let a
+    clear-cut keyword match win at this project's much smaller corpus scale
+    — but re-tuning it meaningfully needs a real embedder (see
+    EmbeddingConfig), not the placeholder FakeEmbedder default, so the
+    literature value stays as the default until Phase 2's later work
+    verifies Voyage end to end and this can be tuned against real
+    semantic scores instead of noise.
+    """
+
+    rrf_k: int = 60
+
+
 class Settings(BaseModel):
     llm: LLMConfig = LLMConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
     chunking: ChunkingConfig = ChunkingConfig()
+    vector_store: VectorStoreConfig = VectorStoreConfig()
+    retrieval: RetrievalConfig = RetrievalConfig()
     log_level: str = "INFO"
 
     anthropic_api_key: str | None = None
