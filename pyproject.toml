@@ -13,12 +13,17 @@ pydantic = "^2.9"
 pyyaml = "^6.0"
 python-dotenv = "^1.0"
 voyageai = "^0.3"
+tree-sitter = "^0.25"
+tree-sitter-python = "^0.23"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"
 
 [tool.poetry.scripts]
 claude-agent-lab = "claude_agent_lab.main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

@@ -41,6 +41,8 @@ _ENV_OVERRIDES: dict[str, tuple[str | None, str]] = {
     "LLM_MAX_TOKENS": ("llm", "max_tokens"),
     "EMBEDDING_PROVIDER": ("embedding", "provider"),
     "EMBEDDING_MODEL": ("embedding", "model"),
+    "CHUNKING_FALLBACK_WINDOW_LINES": ("chunking", "fallback_window_lines"),
+    "CHUNKING_FALLBACK_OVERLAP_LINES": ("chunking", "fallback_overlap_lines"),
     "LOG_LEVEL": (None, "log_level"),
 }
 
@@ -62,9 +64,21 @@ class EmbeddingConfig(BaseModel):
     model: str = "voyage-3.5"
 
 
+class ChunkingConfig(BaseModel):
+    """Fallback (non-syntax-aware) chunker settings.
+
+    Only applies to files without a dedicated syntax-aware chunker (anything
+    but Python, as of Phase 2) — see claude_agent_lab/rag/chunking.py.
+    """
+
+    fallback_window_lines: int = 60
+    fallback_overlap_lines: int = 10
+
+
 class Settings(BaseModel):
     llm: LLMConfig = LLMConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
+    chunking: ChunkingConfig = ChunkingConfig()
     log_level: str = "INFO"
 
     anthropic_api_key: str | None = None
