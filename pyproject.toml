@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "claude-agent-lab"
+version = "0.1.0"
+description = "Incremental rebuild of a RAG-powered, agentic CLI code assistant — a system-design learning project."
+authors = ["Sahil <msahilranjan@gmail.com>"]
+readme = "README.md"
+packages = [{ include = "claude_agent_lab" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+anthropic = ">=1.0.0,<2.0.0"
+pydantic = "^2.9"
+pyyaml = "^6.0"
+python-dotenv = "^1.0"
+voyageai = "^0.3"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3"
+
+[tool.poetry.scripts]
+claude-agent-lab = "claude_agent_lab.main:main"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
