@@ -6,14 +6,15 @@ This is **not** a copy of the reference implementation it's studied from (a sepa
 
 ## Status
 
-**Phase 1 — Foundations: done.** **Phase 2 — RAG core: in progress.**
+**Phase 1 — Foundations: done.** **Phase 2 — RAG core: core pieces done, not yet CLI-facing.**
 
 Landed so far:
 - Layered config system (`claude_agent_lab/config.py` + `config.yaml`): env vars > `.env` > `config.yaml` > built-in defaults, with API keys read only from the environment.
 - LLM/embedder factory (`claude_agent_lab/llm/`): provider-agnostic `LLMClient`/`Embedder` protocols, an Anthropic-backed chat client, and a Voyage AI embedder (implemented, not yet exercised) behind a dependency-free `FakeEmbedder` default.
 - Minimal logger (`claude_agent_lab/observability/logger.py`): stdlib `logging`, one setup call, namespaced child loggers.
 - Bare CLI skeleton (`claude_agent_lab/main.py`): a REPL loop that sends each turn straight to the configured LLM client — no RAG, no tools, no agent loop yet.
-- Code-aware chunking (`claude_agent_lab/rag/chunking.py`): splits a Python file into chunks at function/class boundaries using tree-sitter, with a fixed-size overlapping-line-window fallback for every other file type. Not yet wired to indexing or retrieval — that's the rest of Phase 2.
+- Code-aware chunking (`claude_agent_lab/rag/chunking.py`): splits a Python file into chunks at function/class boundaries using tree-sitter, with a fixed-size overlapping-line-window fallback for every other file type.
+- Indexing & retrieval (`claude_agent_lab/rag/indexer.py`, `retriever.py`, `fusion.py`, `store.py`): embeds chunks into a local (embedded) Qdrant vector store, with both pure-semantic and hybrid (semantic + BM25, combined via Reciprocal Rank Fusion) retrieval. Not yet wired into the CLI — there's no `/ask`-style command that calls this yet.
 
 ## Getting Started
 
@@ -35,21 +36,22 @@ Non-secret settings (model, max tokens, embedding provider, log level) live in [
 ## Limitations
 
 By design, none of the following exist yet:
-- No indexing or retrieval yet — chunking (Phase 2, in progress) has no vector store or search behind it.
+- No `/ask`-style CLI command — indexing and retrieval work as library code (see `tests/test_indexer.py`, `test_retriever.py`) but nothing in `main.py` calls them yet.
 - No agent orchestration or tool use — the REPL is a plain single-turn-per-message chat loop, not an agent (Phase 3).
 - No session or short-term memory — conversation history is in-process only and is lost on exit (Phase 4).
 - No MCP tool integration (Phase 5).
 - No task planner / `/plan` command (Phase 6).
 - No semantic cache, skills registry, file watcher, or CI (Phase 7). A `tests/` directory exists starting Phase 2, but only covers what each phase adds — it's not a project-wide suite yet.
-- The Voyage AI embedder is implemented against the documented client shape but has not been exercised against a live account — `config.yaml` defaults `embedding.provider` to a deterministic `FakeEmbedder` so the CLI runs with zero setup.
+- The Voyage AI embedder is implemented against the documented client shape but has not been exercised against a live account — `config.yaml` defaults `embedding.provider` to a deterministic `FakeEmbedder` so the CLI runs with zero setup. This also means hybrid retrieval's semantic half hasn't been tested against real embeddings yet — see `docs/progress.md`'s open item on retuning `retrieval.rrf_k` once it has.
 - Chunking only has a syntax-aware path for Python; every other file type gets fixed-size line-window chunks.
+- No incremental re-indexing — running the indexer again over an edited codebase updates chunks whose location didn't move, but doesn't clean up chunks that shifted or were deleted (closer to a Phase 7 file-watcher concern).
 
 ## Roadmap
 
 | Phase | Branch | Focus |
 |---|---|---|
 | 1 | `phase-1-foundations` | Config system, LLM/embedder factory, CLI skeleton *(done)* |
-| 2 | `phase-2-rag-core` | Code indexing & retrieval (semantic + hybrid, tree-sitter chunking) *(in progress)* |
+| 2 | `phase-2-rag-core` | Code indexing & retrieval (semantic + hybrid, tree-sitter chunking) *(core pieces done; not CLI-facing yet)* |
 | 3 | `phase-3-agent-core` | Agent orchestration + tool execution |
 | 4 | `phase-4-memory` | Session & short-term memory |
 | 5 | `phase-5-mcp` | MCP tool integration (GitHub, filesystem) |
@@ -64,11 +66,12 @@ Full detail per phase: [`docs/prd.md`](docs/prd.md).
 claude_agent_lab/              ← repo
 ├── claude_agent_lab/          ← the package
 │   ├── llm/                   ← LLMClient / Embedder protocols, factory, providers
-│   ├── rag/                   ← chunking (Phase 2); indexing/retrieval land alongside it
+│   ├── rag/                   ← chunking, indexing, retrieval (Phase 2)
 │   ├── observability/         ← logging
 │   ├── config.py              ← Settings model + config.yaml/.env loader
 │   └── main.py                ← entry point / REPL
 ├── tests/                      ← pytest, one file per module under test
+├── .agent_lab/                  ← local runtime data (Qdrant store) — gitignored, not versioned
 ├── config.yaml                 ← non-secret runtime config (versioned)
 ├── .env.example                 ← secret config template (copy to .env)
 ├── docs/
