@@ -552,3 +552,117 @@ Question-only — meant as prompts to answer out loud or in writing, not a Q&A k
 38. If the codebase this project indexes grew to 50,000 files, which specific design decision from this slice would break first?
 39. Where would you plug in "re-index only the files that changed" without redesigning `Indexer` itself?
 40. If you had to explain to someone why "hybrid search" isn't automatically better than semantic search alone, what would you point to from this session's own findings?
+
+---
+
+## Phase 2 — Wiring retrieval into the CLI (`/index`, `/ask`)
+
+**Branch:** `phase-2-rag-core` (off `main`)
+**Date:** 2026-09-07
+
+### In plain terms
+
+Everything from the last two sessions — chunking, storing, and searching — was library code you could only exercise from a Python shell or a test file. This slice makes it something you actually type into the REPL and get an answer from.
+
+Two new commands:
+- **`/index [path]`** — walk a folder, cut every file into chunks, embed and store them. Point it at this project's own repo and it indexes itself.
+- **`/ask <question>`** — search the index for the most relevant chunks, hand them to Claude as context, and get back an answer grounded in this project's actual code — instead of Claude guessing from general training knowledge. This is "RAG" (Retrieval-Augmented Generation) actually happening end to end for the first time in this project.
+
+Plain chat (from Phase 1) still works exactly as before for anything that isn't one of these two commands.
+
+### What changed
+
+- **`rag/pipeline.py`** (new) — the actual RAG logic, kept separate from `main.py` so it's testable without a terminal, a real LLM, or a real Qdrant instance:
+  - `index_repo(root, indexer, chunking)` — walks a directory (skipping `.git`, `.agent_lab`, `__pycache__`, `.venv`, `node_modules`, and anything hidden), chunks every readable file, indexes it, and reports back an `IndexResult` (files indexed, files skipped, chunks indexed). A file that fails to decode as text is skipped, not fatal to the whole run.
+  - `format_context(chunks)` — renders retrieved chunks as labeled code blocks.
+  - `build_ask_prompt(question, chunks)` — builds the actual prompt sent to the LLM; explicitly tells the model when nothing was retrieved, rather than silently sending a bare question that looks the same as "retrieval found nothing relevant."
+- **`main.py`** — REPL now recognizes `/index`, `/ask`, and `/help`; everything else still goes straight to the LLM as plain chat, unchanged from Phase 1. Wires up `Indexer` and `HybridRetriever` from Phase 2's earlier slice using the config system from Phase 1.
+- **Tests**: `tests/test_pipeline.py` — 10 tests covering directory walking (including the skip list and unreadable-file handling), non-Python files going through the fallback chunker, and prompt building.
+
+### Architecture decisions
+
+**1. Why `/ask` uses `HybridRetriever`, not `SemanticRetriever`**
+- *In plain terms:* There are two retrievers already built (plain semantic, and semantic+keyword hybrid). The CLI only exposes one of them for `/ask` — the hybrid one — rather than making the user pick.
+- *Problem:* `/ask` needs to pick one retrieval strategy; exposing both as separate commands (or a flag) adds complexity for a use case (a single learner-run CLI) where there's no real reason to want the strictly worse option.
+- *Options considered:* expose both retrievers as separate commands/flags; hardcode `SemanticRetriever`; hardcode `HybridRetriever`.
+- *What was chosen:* hardcode `HybridRetriever`.
+- *Tradeoff:* Loses the ability to compare the two strategies from the CLI directly (that comparison already happened in `tests/test_retriever.py` and this project's own dogfooding, which is where it actually matters for understanding the tradeoff). If a real weakness in hybrid's default behavior shows up in practice (the `rrf_k` open item from the last session is exactly this kind of thing), `SemanticRetriever` is still one line away — nothing about this decision deletes it or makes it harder to reach later.
+
+**2. Why the RAG logic lives in `rag/pipeline.py` and not in `main.py`**
+- *In plain terms:* `main.py` could have grown five new functions and stayed "the REPL file." Instead, the actual logic (deciding which files to index, building the prompt) moved into its own module, and `main.py` only calls it.
+- *Problem:* `/index` and `/ask` need real logic (directory walking with a skip list, prompt construction) that has nothing to do with reading a line from stdin or printing a reply.
+- *Options considered:* write `handle_index`/`handle_ask` directly in `main.py`, calling `chunk_file`/`Indexer`/retriever methods inline; extract the logic into `rag/pipeline.py` and have `main.py`'s handlers be thin wrappers that just print results.
+- *What was chosen:* extraction into `rag/pipeline.py`.
+- *Tradeoff:* One more file to open when tracing what `/index` actually does. In exchange, `index_repo` and `build_ask_prompt` are unit-tested directly (`tests/test_pipeline.py`) without needing to drive the REPL's `input()` loop or spin up a real terminal session — the same reasoning that already put `rag/fusion.py` in its own module in the previous slice.
+
+**3. Skipping directories vs. an explicit include-list**
+- *In plain terms:* `/index` decides what to index by naming folders to *skip* (`.git`, `__pycache__`, ...) rather than naming file types to *include*. That means it indexes README files and config files too, not just `.py` files.
+- *Problem:* Walking a whole directory tree will hit things that are never useful to index — version control internals, caches, this project's own local vector store — and the CLI needs some rule for what to skip.
+- *Options considered:* an allow-list of file extensions to index (`.py`, `.md`, ...); a deny-list of directory names to skip, indexing everything else as text.
+- *What was chosen:* the deny-list.
+- *Tradeoff:* An allow-list would guarantee only "real" source/doc files get indexed, at the cost of needing to keep the extension list updated as the project grows (a new `.toml` or `.json` config file wouldn't get indexed until someone remembered to add it). The deny-list already handles anything unexpected gracefully — a binary file that sneaks in just gets skipped by the existing UTF-8 decode check in `chunk_file`, at the cost of `chunk_file` being called (and failing) on files that were never going to be useful anyway. For a "index my own small project" use case, simplicity won over efficiency here.
+
+### HLD — how this phase's concern would be designed from a blank page
+
+**`/ask <question>` end to end:**
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant REPL as main.handle_ask
+    participant Retriever as HybridRetriever
+    participant Pipeline as rag/pipeline
+    participant LLM as AnthropicLLMClient
+
+    User->>REPL: /ask how does chunking work?
+    REPL->>Retriever: retrieve(question, top_k=5)
+    Retriever-->>REPL: list[RetrievedChunk] (possibly empty)
+    REPL->>Pipeline: build_ask_prompt(question, chunks)
+    Pipeline-->>REPL: prompt text (context + question,\nor an explicit "nothing found" note)
+    REPL->>LLM: complete([user: prompt], system=ASK_SYSTEM_PROMPT)
+    alt success
+        LLM-->>REPL: answer text
+        REPL->>User: print answer + source file:line list
+    else LLM call fails
+        LLM-->>REPL: raise RuntimeError
+        REPL->>User: print "[error] ..."
+    end
+```
+
+### LLD — classes/functions/data flow introduced this phase
+
+| Module | Symbol | Responsibility |
+|---|---|---|
+| `rag/pipeline.py` | `IndexResult` | `files_indexed`, `files_skipped`, `chunks_indexed` — what `/index` reports back |
+| `rag/pipeline.py` | `index_repo(root, indexer, chunking)` | Walk a directory (minus `IGNORED_DIR_NAMES`), chunk and index every readable file |
+| `rag/pipeline.py` | `format_context(chunks)` | Render retrieved chunks as labeled code blocks for a prompt |
+| `rag/pipeline.py` | `build_ask_prompt(question, chunks)` | The user-turn text sent to the LLM for `/ask` |
+| `main.py` | `handle_index(path_arg, indexer, chunking)` | REPL-facing wrapper: resolves the path, calls `index_repo`, prints a summary |
+| `main.py` | `handle_ask(question, retriever, llm_client)` | REPL-facing wrapper: retrieve → build prompt → call the LLM → print answer + sources |
+
+**Data flow:** `/index` — a directory path → `index_repo()` → `chunk_file()` per file → `Indexer.index_chunks()` → Qdrant. `/ask` — a question → `HybridRetriever.retrieve()` → `list[RetrievedChunk]` → `build_ask_prompt()` → `LLMClient.complete()` → an answer printed with its source chunks.
+
+### Interview questions
+
+Question-only — meant as prompts to answer out loud or in writing, not a Q&A key.
+
+1. Why does `/ask` hardcode `HybridRetriever` instead of exposing both retrievers as separate commands?
+2. What would break if `/ask` were run before `/index` had ever been called in that process?
+3. Why does `build_ask_prompt` return a different prompt (with an explicit note) when no chunks were retrieved, instead of just sending the bare question either way?
+4. Why does `index_repo` skip a file it can't decode instead of stopping the whole indexing run?
+5. Why does `IGNORED_DIR_NAMES` skip directories by name instead of the CLI only indexing `.py` files?
+6. What happens if you run `/index` twice in a row on the same unchanged directory? Does anything change in the vector store the second time?
+7. Why does `handle_ask` print the source file:line list after the answer, and what would a user lose if that were removed?
+8. Why is `rag/pipeline.py` a separate module instead of putting `index_repo`/`build_ask_prompt` directly in `main.py`?
+9. What's the actual difference in behavior between typing `/ask something` and just typing `something` (no slash) into the REPL?
+10. Why does `handle_index` call `.expanduser().resolve()` on the path argument before checking whether it's a directory?
+11. If `/index` were pointed at a directory with 100,000 files, what part of `index_repo`'s design would become a real problem first?
+12. Why does `main.py`'s plain-chat path still use its own `history` list, separate from anything `/ask` does?
+13. What would need to change for `/ask` to also use conversation history — i.e., a follow-up question that refers back to a previous `/ask` answer?
+14. Why does `handle_ask` catch `RuntimeError` around the LLM call specifically, matching the same exception type `AnthropicLLMClient.complete` was designed to raise back in Phase 1?
+15. If two different embedding providers were used for `/index` and `/ask` in the same run (say, config changed between them), what would actually happen when `/ask` tried to search?
+16. Why is `ASK_SYSTEM_PROMPT` different from `CHAT_SYSTEM_PROMPT`, and what real behavior does that difference actually cause?
+17. What's the risk of `/ask` returning an answer that sounds confident but is grounded in irrelevant chunks — does anything in this design guard against that, even partially?
+18. Where would streaming output plug into `handle_ask`'s current one-shot `llm_client.complete(...)` call?
+19. If this project later wants `/index` to also work incrementally (only re-index changed files), what information would it need to track that it doesn't track today?
+20. What's the smallest change you'd make to turn `/ask` into something closer to a real "agent" (Phase 3), rather than a single retrieve-then-answer call?
