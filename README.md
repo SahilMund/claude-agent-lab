@@ -6,15 +6,15 @@ This is **not** a copy of the reference implementation it's studied from (a sepa
 
 ## Status
 
-**Phase 1 — Foundations: done.** **Phase 2 — RAG core: core pieces done, not yet CLI-facing.**
+**Phase 1 — Foundations: done.** **Phase 2 — RAG core: done.**
 
 Landed so far:
 - Layered config system (`claude_agent_lab/config.py` + `config.yaml`): env vars > `.env` > `config.yaml` > built-in defaults, with API keys read only from the environment.
 - LLM/embedder factory (`claude_agent_lab/llm/`): provider-agnostic `LLMClient`/`Embedder` protocols, an Anthropic-backed chat client, and a Voyage AI embedder (implemented, not yet exercised) behind a dependency-free `FakeEmbedder` default.
 - Minimal logger (`claude_agent_lab/observability/logger.py`): stdlib `logging`, one setup call, namespaced child loggers.
-- Bare CLI skeleton (`claude_agent_lab/main.py`): a REPL loop that sends each turn straight to the configured LLM client — no RAG, no tools, no agent loop yet.
+- CLI (`claude_agent_lab/main.py`): a REPL with plain chat (Phase 1), plus `/index [path]` and `/ask <question>` (Phase 2) — no agent loop or tool use yet, that's Phase 3.
 - Code-aware chunking (`claude_agent_lab/rag/chunking.py`): splits a Python file into chunks at function/class boundaries using tree-sitter, with a fixed-size overlapping-line-window fallback for every other file type.
-- Indexing & retrieval (`claude_agent_lab/rag/indexer.py`, `retriever.py`, `fusion.py`, `store.py`): embeds chunks into a local (embedded) Qdrant vector store, with both pure-semantic and hybrid (semantic + BM25, combined via Reciprocal Rank Fusion) retrieval. Not yet wired into the CLI — there's no `/ask`-style command that calls this yet.
+- Indexing & retrieval (`claude_agent_lab/rag/indexer.py`, `retriever.py`, `fusion.py`, `store.py`): embeds chunks into a local (embedded) Qdrant vector store, with both pure-semantic and hybrid (semantic + BM25, combined via Reciprocal Rank Fusion) retrieval, reachable from the CLI via `/index` and `/ask` (`rag/pipeline.py`).
 
 ## Getting Started
 
@@ -33,11 +33,24 @@ poetry run claude-agent-lab
 
 Non-secret settings (model, max tokens, embedding provider, log level) live in [`config.yaml`](config.yaml) and can be overridden per-run with `AGENT_LAB_<SECTION>_<FIELD>` environment variables — see the comments in `config.yaml` and `.env.example`.
 
+Once running, index a codebase and ask questions about it:
+
+```
+> /index .
+Indexing /path/to/some/repo ...
+Indexed 30 files (135 chunks); skipped 0 unreadable file(s).
+
+> /ask how does the config system decide precedence between config.yaml and env vars?
+<answer, grounded in the retrieved chunks, followed by their source file:line locations>
+```
+
+Anything not starting with `/index` or `/ask` is sent straight to the LLM as plain chat (Phase 1 behavior, unchanged).
+
 ## Limitations
 
 By design, none of the following exist yet:
-- No `/ask`-style CLI command — indexing and retrieval work as library code (see `tests/test_indexer.py`, `test_retriever.py`) but nothing in `main.py` calls them yet.
-- No agent orchestration or tool use — the REPL is a plain single-turn-per-message chat loop, not an agent (Phase 3).
+- `/ask` is one retrieval call plus one LLM call — no multi-turn follow-up, no memory of previous `/ask` questions, no agent loop deciding to search again or use a tool. That's Phase 3+.
+- No agent orchestration or tool use — the REPL is a plain single-turn-per-message chat loop (or a single retrieve-then-answer call for `/ask`), not an agent (Phase 3).
 - No session or short-term memory — conversation history is in-process only and is lost on exit (Phase 4).
 - No MCP tool integration (Phase 5).
 - No task planner / `/plan` command (Phase 6).
@@ -51,7 +64,7 @@ By design, none of the following exist yet:
 | Phase | Branch | Focus |
 |---|---|---|
 | 1 | `phase-1-foundations` | Config system, LLM/embedder factory, CLI skeleton *(done)* |
-| 2 | `phase-2-rag-core` | Code indexing & retrieval (semantic + hybrid, tree-sitter chunking) *(core pieces done; not CLI-facing yet)* |
+| 2 | `phase-2-rag-core` | Code indexing & retrieval (semantic + hybrid, tree-sitter chunking) *(done)* |
 | 3 | `phase-3-agent-core` | Agent orchestration + tool execution |
 | 4 | `phase-4-memory` | Session & short-term memory |
 | 5 | `phase-5-mcp` | MCP tool integration (GitHub, filesystem) |
