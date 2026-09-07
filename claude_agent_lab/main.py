@@ -1,21 +1,22 @@
 """Entry point: config load, logging setup, and the REPL loop.
 
-Three things happen in a REPL turn now:
+Four things happen in a REPL turn now:
 - plain text -> straight to the LLM, same as Phase 1's bare chat loop.
 - `/index [path]` -> chunk and index a directory (default: cwd) into the
   vector store.
 - `/ask <question>` -> retrieve relevant chunks (hybrid search) and ask the
-  LLM to answer grounded in them — this is the RAG behavior the PRD's
-  Phase 2 row is ultimately in service of.
-
-Still no agent loop or tool use — `/ask` is one retrieval call plus one LLM
-call, not a multi-step agent. That's Phase 3.
+  LLM to answer grounded in them — one retrieval call plus one LLM call,
+  not a multi-step agent.
+- `/agent <goal>` -> hand the goal to the Phase 3 tool-use loop, which can
+  read files and list directories on its own (possibly several times) to
+  work out an answer, instead of relying on whatever was retrieved once.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from claude_agent_lab.agent.factory import build_agent
 from claude_agent_lab.config import get_settings
 from claude_agent_lab.llm.base import ChatMessage
 from claude_agent_lab.llm.factory import get_embedder, get_llm_client
@@ -37,6 +38,7 @@ HELP_TEXT = (
     "Commands:\n"
     "  /index [path]    chunk and index a directory (default: current directory)\n"
     "  /ask <question>  answer a question using retrieved code context (RAG)\n"
+    "  /agent <goal>    let the agent read files/directories on its own to work it out\n"
     "  /exit, /quit     quit\n"
     "  anything else is sent straight to the LLM as plain chat\n"
 )
@@ -79,6 +81,13 @@ def handle_ask(question: str, *, retriever: HybridRetriever, llm_client) -> None
         print(f"\n[sources: {sources}]")
 
 
+def handle_agent(goal: str, *, orchestrator) -> None:
+    if not goal:
+        print("[error] usage: /agent <goal>")
+        return
+    print(orchestrator.run(goal))
+
+
 def run_repl() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
@@ -88,6 +97,7 @@ def run_repl() -> None:
         llm_client = get_llm_client(settings)
         embedder = get_embedder(settings)
         qdrant_client = get_qdrant_client(settings.vector_store.path)
+        agent = build_agent(settings, root=Path.cwd())
     except Exception as exc:  # a bad provider/config shouldn't crash with a traceback
         print(f"Failed to initialize: {exc}")
         return
@@ -105,7 +115,7 @@ def run_repl() -> None:
     )
 
     history: list[ChatMessage] = []
-    print("claude_agent_lab — phase 2. Type /help for commands, /exit to quit.\n")
+    print("claude_agent_lab — phase 3. Type /help for commands, /exit to quit.\n")
 
     while True:
         try:
@@ -126,6 +136,9 @@ def run_repl() -> None:
             continue
         if user_input.startswith("/ask "):
             handle_ask(user_input[len("/ask ") :].strip(), retriever=retriever, llm_client=llm_client)
+            continue
+        if user_input.startswith("/agent "):
+            handle_agent(user_input[len("/agent ") :].strip(), orchestrator=agent)
             continue
 
         history.append({"role": "user", "content": user_input})

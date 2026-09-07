@@ -6,15 +6,16 @@ This is **not** a copy of the reference implementation it's studied from (a sepa
 
 ## Status
 
-**Phase 1 — Foundations: done.** **Phase 2 — RAG core: done.**
+**Phase 1 — Foundations: done.** **Phase 2 — RAG core: done.** **Phase 3 — Agent core: filesystem tools done; terminal tools not yet built.**
 
 Landed so far:
 - Layered config system (`claude_agent_lab/config.py` + `config.yaml`): env vars > `.env` > `config.yaml` > built-in defaults, with API keys read only from the environment.
-- LLM/embedder factory (`claude_agent_lab/llm/`): provider-agnostic `LLMClient`/`Embedder` protocols, an Anthropic-backed chat client, and a Voyage AI embedder (implemented, not yet exercised) behind a dependency-free `FakeEmbedder` default.
+- LLM/embedder factory (`claude_agent_lab/llm/`): provider-agnostic `LLMClient`/`Embedder` protocols, an Anthropic-backed chat client (plain chat + tool-enabled completion), and a Voyage AI embedder (implemented, not yet exercised) behind a dependency-free `FakeEmbedder` default.
 - Minimal logger (`claude_agent_lab/observability/logger.py`): stdlib `logging`, one setup call, namespaced child loggers.
-- CLI (`claude_agent_lab/main.py`): a REPL with plain chat (Phase 1), plus `/index [path]` and `/ask <question>` (Phase 2) — no agent loop or tool use yet, that's Phase 3.
+- CLI (`claude_agent_lab/main.py`): a REPL with plain chat (Phase 1), `/index [path]` and `/ask <question>` (Phase 2), and `/agent <goal>` (Phase 3).
 - Code-aware chunking (`claude_agent_lab/rag/chunking.py`): splits a Python file into chunks at function/class boundaries using tree-sitter, with a fixed-size overlapping-line-window fallback for every other file type.
 - Indexing & retrieval (`claude_agent_lab/rag/indexer.py`, `retriever.py`, `fusion.py`, `store.py`): embeds chunks into a local (embedded) Qdrant vector store, with both pure-semantic and hybrid (semantic + BM25, combined via Reciprocal Rank Fusion) retrieval, reachable from the CLI via `/index` and `/ask` (`rag/pipeline.py`).
+- Agent orchestration (`claude_agent_lab/agent/`): a hand-written tool-use loop (`orchestrator.py`) that can call `read_file`/`list_directory` (`tools.py`, sandboxed to a project root) as many times as it needs before answering, wired up via `factory.py` and the `/agent` command. No terminal/shell tool yet — see Limitations.
 
 ## Getting Started
 
@@ -44,14 +45,21 @@ Indexed 30 files (135 chunks); skipped 0 unreadable file(s).
 <answer, grounded in the retrieved chunks, followed by their source file:line locations>
 ```
 
-Anything not starting with `/index` or `/ask` is sent straight to the LLM as plain chat (Phase 1 behavior, unchanged).
+Or let the agent look around on its own instead of relying on retrieval alone:
+
+```
+> /agent what does the read_file tool do and where is it defined?
+<the model reads claude_agent_lab/agent/tools.py itself, then answers>
+```
+
+Anything not starting with `/index`, `/ask`, or `/agent` is sent straight to the LLM as plain chat (Phase 1 behavior, unchanged).
 
 ## Limitations
 
 By design, none of the following exist yet:
-- `/ask` is one retrieval call plus one LLM call — no multi-turn follow-up, no memory of previous `/ask` questions, no agent loop deciding to search again or use a tool. That's Phase 3+.
-- No agent orchestration or tool use — the REPL is a plain single-turn-per-message chat loop (or a single retrieve-then-answer call for `/ask`), not an agent (Phase 3).
-- No session or short-term memory — conversation history is in-process only and is lost on exit (Phase 4).
+- **No terminal/shell tool.** `/agent` can only read files and list directories — it can't run commands. The PRD's Phase 3 row calls for both filesystem *and* terminal tools; terminal execution is deliberately staged as its own later slice with its own safety design (what can it run, does it need approval), rather than shipped now ahead of the approval/recovery flow Phase 6 plans. See `docs/progress.md`'s architecture-decision log.
+- `/ask` is one retrieval call plus one LLM call — no multi-turn follow-up, no memory of previous `/ask` questions. `/agent` can loop (up to `agent.max_tool_iterations`, default 10) but also has no memory across separate `/agent` calls.
+- No session or short-term memory — conversation history (chat, `/ask`, and `/agent` alike) is in-process only and is lost on exit (Phase 4).
 - No MCP tool integration (Phase 5).
 - No task planner / `/plan` command (Phase 6).
 - No semantic cache, skills registry, file watcher, or CI (Phase 7). A `tests/` directory exists starting Phase 2, but only covers what each phase adds — it's not a project-wide suite yet.
@@ -65,7 +73,7 @@ By design, none of the following exist yet:
 |---|---|---|
 | 1 | `phase-1-foundations` | Config system, LLM/embedder factory, CLI skeleton *(done)* |
 | 2 | `phase-2-rag-core` | Code indexing & retrieval (semantic + hybrid, tree-sitter chunking) *(done)* |
-| 3 | `phase-3-agent-core` | Agent orchestration + tool execution |
+| 3 | `phase-3-agent-core` | Agent orchestration + tool execution *(filesystem tools done; terminal tools pending)* |
 | 4 | `phase-4-memory` | Session & short-term memory |
 | 5 | `phase-5-mcp` | MCP tool integration (GitHub, filesystem) |
 | 6 | `phase-6-task-planning` | Agentic task planner with approval/recovery loop |
@@ -80,6 +88,7 @@ claude_agent_lab/              ← repo
 ├── claude_agent_lab/          ← the package
 │   ├── llm/                   ← LLMClient / Embedder protocols, factory, providers
 │   ├── rag/                   ← chunking, indexing, retrieval (Phase 2)
+│   ├── agent/                 ← tool-use loop, filesystem tools (Phase 3)
 │   ├── observability/         ← logging
 │   ├── config.py              ← Settings model + config.yaml/.env loader
 │   └── main.py                ← entry point / REPL

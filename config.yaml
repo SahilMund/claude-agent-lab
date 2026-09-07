@@ -42,4 +42,9 @@ retrieval:
   # a real embedder (not FakeEmbedder) is in use.
   rrf_k: 60
 
+agent:
+  # Hard cap on the tool-use loop (agent/orchestrator.py) — a safety net
+  # against a confused loop running forever, not a quality knob.
+  max_tool_iterations: 10
+
 log_level: INFO
