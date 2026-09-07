@@ -70,8 +70,9 @@ By design, none of the following exist yet:
 | 5 | `phase-5-mcp` | MCP tool integration (GitHub, filesystem) |
 | 6 | `phase-6-task-planning` | Agentic task planner with approval/recovery loop |
 | 7 | `phase-7-production` | Semantic cache, observability, skills registry, tests, CI |
+| 8 | `phase-8-frontend` | Dashboard UI: FastAPI backend + React/Vite frontend over the existing CLI backend (indexing status, `/ask` sources, live agent trace) |
 
-Full detail per phase: [`docs/prd.md`](docs/prd.md).
+Phase 8 is an addition on top of the CLI-first plan, not a replacement for it — see `docs/prd.md`'s scope note. Full detail per phase: [`docs/prd.md`](docs/prd.md).
 
 ## Project Layout
 
