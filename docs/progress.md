@@ -178,133 +178,6 @@ Question-only — meant as prompts to answer out loud or in writing, not a Q&A k
 
 ---
 
-## Phase 8 — Dashboard (FastAPI + React), verified end-to-end
-
-> **Removed (2026-09-08).** The dashboard (`claude_agent_lab/api/` + `frontend/`) was deleted from the repo — it wasn't working reliably and wasn't worth carrying as a second UI surface for something the CLI already does. `fastapi`, `uvicorn`, and `sse-starlette` were dropped from `pyproject.toml`; the CLI (`main.py`) is the only interface now. Everything below is kept as a historical record of what was built and how — it no longer describes current behavior. See `docs/prd.md`'s Phase 8 entry for the up-to-date status.
-
-**Branch:** `phase-8-frontend` (off `dev`)
-**Date:** 2026-09-07
-
-### In plain terms
-
-Everything built so far only had one front door: a terminal REPL. This phase adds a second one — a small web dashboard — without touching how the backend actually works. A FastAPI service wraps the exact same functions `main.py`'s REPL already calls (index the repo, retrieve chunks, ask the agent), and a React page calls that service instead of reading `stdin`.
-
-Three views: how big the index is right now, a question-and-answer view that shows which code chunks an answer came from, and a "watch it work" view that streams each tool call the agent makes live instead of only showing you the final answer once it's done.
-
-This is the one phase with nothing to port — the source project never had a web UI — so it's built directly, verified against the exact same live infrastructure (a real Qdrant instance, real MCP servers) the backend port was verified against, not against mocks.
-
-### What changed
-
-- **`claude_agent_lab/api/app.py`** — FastAPI app factory. Its startup (`lifespan`) does exactly what `main.py`'s `initialize()` does, in the same order: index the repo, build the semantic cache, build the agent with a SQLite checkpointer, start the file watcher. Same functions, not a reimplementation.
-- **`claude_agent_lab/api/routes.py`** — `GET /health`, `GET /index/status`, `POST /index` (re-index), `POST /ask` (agent answer + structured sources), `POST /agent/stream` (Server-Sent Events: each tool call live, then the final answer).
-- **`claude_agent_lab/api/schemas.py`** — Pydantic request/response models.
-- **`frontend/`** — React + Vite + TypeScript. `src/api.ts` (the HTTP client, including a hand-rolled SSE parser — see the architecture decision below), three components (`IndexPanel`, `AskPanel`, `AgentPanel`), tab navigation in `App.tsx`.
-- **`pyproject.toml`** — added `fastapi`, `uvicorn`, `sse-starlette` (the last one was already present transitively, pulled in by `mcp`).
-
-### Architecture decisions
-
-**1. `/ask` calls the retriever directly instead of parsing the agent's own tool output for "sources"**
-- *In plain terms:* The agent already looks up relevant code internally (via its own `search_codebase` tool) when answering. That tool returns a big formatted string meant for the model to read, not clean structured data a dashboard can render as a list. Rather than parse that string back apart, `/ask` just calls the retriever a second time, directly, for the sources it shows.
-- *Problem:* Need structured `{source, name, type, start_line, end_line, distance}` data for the dashboard, but the agent's own retrieval happens inside a tool call whose result is a formatted string, not structured data.
-- *Options considered:* parse the tool's formatted string output back into fields; call the retriever a second, independent time for display purposes only.
-- *What was chosen:* the second retrieval call.
-- *Tradeoff:* One extra retrieval call per `/ask` request — cheap, since it's a vector search, not an LLM call. In exchange, the "sources" shown are never at the mercy of a formatted-string layout change breaking a parser, and — genuinely useful in practice — they still show up even when the model call itself fails (confirmed directly: with a fake API key during testing, `/ask` correctly returned real sources alongside the model's 401 error message).
-
-**2. Hand-rolled SSE parsing on the frontend, not the browser's built-in `EventSource`**
-- *In plain terms:* Browsers have a built-in way to receive a live stream of server events (`EventSource`), but it only supports GET requests — it can't send a question in a POST body. So the agent-trace view reads the stream by hand from a regular `fetch()` call instead.
-- *Problem:* `/agent/stream` needs a request body (the question), which `EventSource` can't send.
-- *Options considered:* restructure the API to take the question as a GET query parameter so `EventSource` works; parse the SSE wire format manually from a `fetch()` response's streamed body.
-- *What was chosen:* manual parsing (`src/api.ts`'s `streamAgent`).
-- *Tradeoff:* More code than "just use `EventSource`" — the wire format (`event: ...\ndata: ...\n\n`) has to be split and buffered by hand as chunks arrive, since a network chunk boundary and a message boundary aren't the same thing. Chosen over cramming a whole question into a URL query string, which has real length limits and gets logged in more places (server access logs, browser history) than a POST body does.
-
-**3. LangGraph's `astream_events(version="v2")`, verified against a fake tool-calling model before writing any of the parsing code**
-- *In plain terms:* To show live tool calls, the streaming endpoint needs to know the exact shape of the events LangGraph emits. Rather than guess from documentation, a tiny standalone script built a fake LLM that calls a tool then answers, and printed every event `astream_events` actually produced — then the endpoint was written to match what was actually observed.
-- *Problem:* Needed the real event shape (`event["event"]`, `event["name"]`, `event["data"]`) for `on_tool_start`/`on_tool_end`/final-answer detection, without spending real API calls on trial and error.
-- *What was verified, concretely:* `on_tool_start` carries the tool name and input; `on_tool_end` carries a `ToolMessage` object (accessed via `.content`) as its output; the overall run's final event is `on_chain_end` with `event["name"] == "LangGraph"`, whose `data["output"]["messages"]` is the full conversation — the final answer is the last message with `.type == "ai"` and non-empty `.content`.
-- *Why this matters:* This is the same "verify before building" discipline the backend port itself used (see the earlier entry's bugs, all found by running real code) — applied here to writing new code instead of fixing ported code. A wrong guess about event shape would have shipped a trace view that silently showed nothing, discovered only when someone tried it with a real API key.
-
-### HLD — one `/agent/stream` request
-
-```mermaid
-sequenceDiagram
-    participant Browser
-    participant API as FastAPI (/agent/stream)
-    participant Agent as LangGraph agent
-    participant Tool as search_codebase / other tools
-    participant LLM as Claude (via LangChain)
-
-    Browser->>API: POST /agent/stream {question}
-    API->>Agent: astream_events({messages: [question]})
-    loop until the model stops calling tools
-        Agent->>LLM: model turn
-        LLM-->>Agent: tool call (or final answer)
-        alt tool call
-            Agent->>Tool: run tool
-            Tool-->>Agent: result
-            Agent-->>API: on_tool_start / on_tool_end events
-            API-->>Browser: SSE "tool_start" / "tool_end"
-        else final answer
-            Agent-->>API: on_chain_end (name=LangGraph)
-            API-->>Browser: SSE "final"
-        end
-    end
-```
-
-### LLD — what's new
-
-| File | Symbol | Responsibility |
-|---|---|---|
-| `api/app.py` | `create_app()`, `lifespan()` | FastAPI app + startup/shutdown matching `main.py`'s own sequence |
-| `api/routes.py` | `index_status`, `reindex`, `ask`, `agent_stream` | Thin HTTP wrappers over existing backend functions |
-| `api/schemas.py` | `IndexResponse`, `AskResponse`, `SourceChunk`, `AgentStreamRequest` | Request/response shapes |
-| `frontend/src/api.ts` | `getIndexStatus`, `reindex`, `ask`, `streamAgent` | HTTP client; `streamAgent` includes the hand-rolled SSE parser |
-| `frontend/src/components/IndexPanel.tsx` | `IndexPanel` | Index size + re-index button |
-| `frontend/src/components/AskPanel.tsx` | `AskPanel` | Question → answer + sources |
-| `frontend/src/components/AgentPanel.tsx` | `AgentPanel` | Question → live tool-call trace → final answer |
-
-### Verification performed
-
-- `POST /index/status`, `POST /index` — real point counts from a live Qdrant instance.
-- `POST /ask` — with a fake Anthropic API key: **sources were correctly and relevantly retrieved** (asking "how does the code parser find function names?" surfaced `_extract_name`, `_parse_with_treesitter`, and `ParsedChunk` — the actually-relevant code), and the model-call failure came back as a clean 401 message in `answer`, not a crashed request.
-- `POST /agent/stream` — same fake-key test: a clean SSE `error` event, no hang, no unhandled exception. The success path (`tool_start`/`tool_end`/`final` events) was verified separately against a fake tool-calling LLM before this code was written (see Architecture Decision 3) and the endpoint's parsing logic matches that verified shape exactly.
-- CORS preflight (`OPTIONS /ask` with `Origin: http://localhost:5173`) — correctly allowed.
-- `npm run build` — clean TypeScript compile, no type errors.
-- Frontend dev server served the correct page (confirmed by title, after an unrelated dev server already running on the default port 5173 caused an initial mix-up — resolved by checking which port Vite actually bound to).
-
-Not yet verified: a real end-to-end run against a live Anthropic API key (same gap as the backend-port entry — no key was available in this sandbox), and no automated frontend tests exist yet.
-
-### Open items
-
-- No test suite (backend or frontend) — same gap as the rest of this project so far.
-- The dashboard has no visual confirmation from an actual browser (no headless browser tool was available this session) — verified via `curl`, build output, and direct backend testing instead. Worth a manual look before treating the UI itself as fully proven.
-- `/plan` (the task planner) isn't exposed via the API — its CLI implementation blocks on `input()` for a human approval step, which doesn't translate directly to a stateless HTTP request. Left out of Phase 8's scope rather than half-adapted.
-
-### Interview questions
-
-Question-only — meant as prompts to answer out loud or in writing, not a Q&A key.
-
-1. Why does the FastAPI app's `lifespan` function call the exact same functions `main.py` calls, in the same order, instead of writing simpler API-specific startup logic?
-2. What would break if `/ask`'s retrieval call and the agent's internal `search_codebase` call used different `k` values?
-3. Why can't the browser's built-in `EventSource` be used for `/agent/stream`?
-4. Walk through what happens if a network chunk splits an SSE message exactly in the middle of `data: {"tool"` — why does the `streamAgent` parser handle this correctly?
-5. Why was a fake tool-calling LLM built to inspect `astream_events`' output before writing the streaming endpoint, instead of writing the endpoint first and testing it against a real model call?
-6. What does `on_chain_end` with `name == "LangGraph"` actually represent, versus the `on_chain_end` events for `model` or `tools` that also appear in the stream?
-7. Why does extracting the final answer look for the *last* message with `.type == "ai"` and non-empty content, rather than just taking the last message in the list?
-8. What happens to an in-flight `/agent/stream` request if the browser tab is closed mid-stream — does anything on the server notice?
-9. Why is CORS configured to allow only `http://localhost:5173` instead of allowing all origins (`*`)?
-10. What's the actual risk of `allow_origins=["*"]` for an API like this one, given it also allows credentials?
-11. Why does `IndexPanel` fetch status on mount instead of waiting for the user to click something?
-12. What would need to change for the agent trace view to survive a page refresh mid-stream?
-13. Why does `/ask`'s response model (`AskResponse`) separate `answer` and `sources` into distinct fields instead of just returning the agent's raw formatted string?
-14. What's the actual difference between `/ask` and `/agent/stream` from the backend's perspective — do they call different agent logic, or the same logic exposed two ways?
-15. Why does this phase's own verification lean on `curl` and direct Python testing rather than a browser, and what's the actual risk of not having verified the UI visually?
-16. If a second frontend (say, a CLI-based TUI) wanted to reuse this same backend, what would it need from `claude_agent_lab/api/` that isn't already there?
-17. Why is `/plan` deliberately left out of the API rather than adapted to work without its blocking `input()` call?
-18. What's the tradeoff between building the dashboard as a single-page app (what was built) versus server-rendered pages, for this specific use case?
-19. Why does the dashboard's `AgentPanel` let a user click "Stop" mid-stream (`AbortController`), and what actually happens on the server when that fires?
-20. Given everything else in this project was ported and verified against real infrastructure, what would you look for to decide whether Phase 8's "genuinely new" code met the same bar?
----
-
 ## Phase 1 enhancement — multi-provider LLM support (Gemini, Groq, Ollama)
 
 **Branch:** `phase-1-multi-llm-provider` (off `dev`)
@@ -314,7 +187,7 @@ Question-only — meant as prompts to answer out loud or in writing, not a Q&A k
 
 `llm/factory.py::get_llm()` already had the shape for this — a `provider` string in config picks which LangChain chat class to build. The source only used that shape for two providers (`anthropic`, `openai`, the second one really just "everything else falls through to here"). This session adds three more branches to the exact same pattern: Gemini, Groq, and Ollama (a local model server — no API key at all). Switching between any of the five is a one-line `config.yaml` edit, same as it always was for the original two.
 
-This is an enhancement on top of ported code, not new architecture — `CLAUDE.md`'s own process explicitly calls this kind of thing out as encouraged, distinct from inventing a module the source has no equivalent of at all (that's Phase 8).
+This is an enhancement on top of ported code, not new architecture — `CLAUDE.md`'s own process explicitly calls this kind of thing out as encouraged, distinct from inventing a module the source has no equivalent of at all.
 
 ### What changed
 
@@ -466,7 +339,7 @@ Called the same filesystem MCP tool three times in a row in an isolated script: 
 
 ### In plain terms
 
-Everything this agent remembers about a conversation lives in `memory/short_term.py` — a LangGraph checkpointer keyed by `thread_id`, wiped clean (functionally, if not literally deleted) the moment you start a new session with `/new_session`. There was no way for the agent to carry a fact — "the user prefers early returns over nested if/else," "this project uses Poetry, not pip" — forward into a *different* session. `memory/session.py` and `short_term.py` are both direct ports of the source's own `memory/` module; the source has no third file for this. This is genuinely new work, not a port — same category as Phase 8's frontend, per `CLAUDE.md`'s own rule about what's fair game for independent design.
+Everything this agent remembers about a conversation lives in `memory/short_term.py` — a LangGraph checkpointer keyed by `thread_id`, wiped clean (functionally, if not literally deleted) the moment you start a new session with `/new_session`. There was no way for the agent to carry a fact — "the user prefers early returns over nested if/else," "this project uses Poetry, not pip" — forward into a *different* session. `memory/session.py` and `short_term.py` are both direct ports of the source's own `memory/` module; the source has no third file for this. This is genuinely new work, not a port, per `CLAUDE.md`'s own rule about what's fair game for independent design when the source has no equivalent.
 
 ### What changed
 

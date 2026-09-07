@@ -195,7 +195,6 @@ See `docs/progress.md` for the full writeup, including what was *not* changed an
 | 5 | MCP tool integration | Built, verified (GitHub + filesystem servers, 40 tools) |
 | 6 | Agentic task planner | Built |
 | 7 | Production concerns (cache, watcher, skills) | Built |
-| 8 | Dashboard UI (FastAPI + React) | Removed — see `docs/progress.md` |
 
 Full detail: `docs/prd.md`.
 
