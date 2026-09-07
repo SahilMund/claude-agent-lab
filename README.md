@@ -10,7 +10,7 @@ Unlike this repo's earlier history (see `git log` before this branch), this is *
 
 What's here:
 - **Config** (`config.py`, `config.yaml`) — plain YAML, loaded once at import time. `.env` for secrets.
-- **LLM/embeddings** (`llm/factory.py`) — LangChain-based: `ChatAnthropic` for chat (this fork's default provider — the source defaults to OpenAI), `HuggingFaceEmbeddings` for embeddings (runs locally, no API key — the source defaults to OpenAI embeddings, which would need a second API key for no real reason here).
+- **LLM/embeddings** (`llm/factory.py`) — LangChain-based, provider chosen by `config.yaml`'s `llm.provider`, no code change needed to switch: `anthropic` (default — the source defaults to OpenAI), `openai`, `gemini`, `groq`, or `ollama` (local, no API key). `HuggingFaceEmbeddings` for embeddings (runs locally, no API key — the source defaults to OpenAI embeddings, which would need a second API key for no real reason here).
 - **Indexing & retrieval** (`context/indexers/`, `context/retrievers/`) — tree-sitter-based code-aware chunking (15 languages), semantic (Chroma or Qdrant) or hybrid (Qdrant native sparse+dense) retrieval, chosen via `config.yaml`. Default: Qdrant + hybrid.
 - **Agent** (`agent/`) — LangChain's `create_agent` + LangGraph checkpointer-backed memory, with a `search_codebase` tool, filesystem tools (`tools/filesystem_tools.py`), a terminal tool (`tools/terminal_tools.py`), MCP tools (GitHub + filesystem servers), and skill-as-tool loading.
 - **Memory** (`memory/`) — session tracking (which conversation thread is "current") plus a SQLite-backed LangGraph checkpointer with automatic summarization once a conversation gets long.
@@ -61,6 +61,21 @@ On startup, the CLI indexes the current directory (skipping unchanged data on re
 > /plan <goal>           # generate and execute a multi-step plan
 > /task_status           # show progress on active plans
 ```
+
+### Switching LLM providers
+
+`llm/factory.py` supports five providers — a `config.yaml` edit, no code change:
+
+```yaml
+llm:
+  provider: anthropic   # anthropic | openai | gemini | groq | ollama
+  model: claude-opus-5  # a model name valid for that provider
+```
+
+Each provider (except `ollama`, which talks to a local server instead) reads its API key
+from its own env var — see `.env.example`. Only the branches for `anthropic` and `openai`
+came from the source; `gemini`, `groq`, and `ollama` are an enhancement on top of the same
+factory pattern (see `docs/progress.md`).
 
 ### Dashboard (Phase 8)
 
