@@ -30,6 +30,12 @@ memory:
  summarize_at_tokens: 4000
  keep_last_messages: 20
 
+# Cross-session facts/preferences, separate from the memory.* block above
+# (which is per-session history keyed by thread_id). No source equivalent —
+# see memory/long_term.py's module docstring.
+long_term_memory:
+ collection_name: claude_agent_lab_memory
+
 chromadb:
  persist_dir: .agent_lab/chromadb/
  collection_name: codebase

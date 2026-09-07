@@ -413,3 +413,106 @@ Called the same filesystem MCP tool three times in a row in an isolated script: 
 8. Why was `inspect.getsource()` used to read `langchain-mcp-adapters`' actual installed source rather than trusting its public documentation or type hints?
 9. What's the tradeoff of silencing `langchain_google_genai._function_utils` warnings at the logger level versus fixing the tool schemas themselves so `additionalProperties`/`$schema` are never generated in the first place?
 10. Could this same per-call-reconnection bug exist anywhere else in this codebase that also wraps a "stateless" client API without realizing it opens a new connection per call?
+
+---
+
+## New capability — long-term memory (cross-session facts/preferences)
+
+**Branch:** `feat-long-term-memory` (off `perf-mcp-persistent-sessions`)
+**Date:** 2026-09-07
+
+### In plain terms
+
+Everything this agent remembers about a conversation lives in `memory/short_term.py` — a LangGraph checkpointer keyed by `thread_id`, wiped clean (functionally, if not literally deleted) the moment you start a new session with `/new_session`. There was no way for the agent to carry a fact — "the user prefers early returns over nested if/else," "this project uses Poetry, not pip" — forward into a *different* session. `memory/session.py` and `short_term.py` are both direct ports of the source's own `memory/` module; the source has no third file for this. This is genuinely new work, not a port — same category as Phase 8's frontend, per `CLAUDE.md`'s own rule about what's fair game for independent design.
+
+### What changed
+
+- **`memory/long_term.py` (new)** — `remember(fact, category)` writes a fact into a Qdrant collection (`claude_agent_lab_memory` by default, separate from the code-index collection); `recall(query, k)` does a semantic similarity search over it. Same embedder (`llm/factory.py`'s `get_embedder()`) as the code index, so switching `embeddings.provider` affects both.
+- **`agent/tools.py`** — `remember`/`recall` wrapped as LangChain tools, same shape as the existing `search_codebase` tool.
+- **`agent/factory.py`** — both tools registered on the agent; system prompt extended to tell the model when to use each (`recall` before answering if a past preference might apply, `remember` only for durable facts — not one-off details).
+- **`config.yaml`** — new `long_term_memory.collection_name` setting.
+
+### Architecture decisions
+
+**Storage: a separate Qdrant collection, not a new database**
+- *Problem:* Facts need to be found by meaning ("how should I handle errors?" should match a stored fact about preferring early returns), not exact string match — a plain SQLite `LIKE` table wouldn't do that.
+- *Options considered:* (a) a new Qdrant collection, reusing infrastructure the code index already exercises; (b) a new table in the existing SQLite checkpointer DB with a separate embedding index bolted on; (c) a third database entirely (e.g. a dedicated vector DB just for this).
+- *What was chosen:* (a).
+- *Tradeoff:* Reuses `QdrantClient`/`QdrantVectorStore` code paths this project already depends on and has already debugged (see the `QDRANT_API_KEY=""` HTTPS bug — the same `or None` fix applies here), at the cost of two Qdrant collections to keep straight instead of one. Rejected (b) because SQLite has no native vector search, and rejected (c) because introducing an entirely separate storage system for one small feature would be a heavier footprint than the feature justifies.
+
+**Retrieval: explicit agent-called tools, not automatic injection into every prompt**
+- *Problem:* Stored facts need to reach the model's context somehow — either automatically prepended to every request, or fetched only when the model decides to.
+- *Options considered:* (a) two tools (`recall`/`remember`) the agent calls explicitly, mirroring `search_codebase`'s existing pattern; (b) always run a `recall(question)` search before every agent turn and inject the top-k results into the system prompt automatically, with no tool call involved.
+- *What was chosen:* (a).
+- *Tradeoff:* (b) guarantees relevant facts are never missed by the model simply not calling a tool, but costs an embedding + Qdrant round-trip on *every single turn*, even ones with no relevant long-term facts at all, and makes "why did the model bring up X" harder to trace (it's not a visible tool call in the log, just silently-injected context). (a) costs nothing when the model judges recall irrelevant, keeps every memory read/write visible as a named tool call in the same trace the rest of this project already relies on for debugging, and matches the existing tool-driven design (filesystem, terminal, skills, codebase search — everything already goes through an explicit tool, not implicit context injection). Tradeoff accepted: relies on the model actually deciding to call `recall`, which the system prompt nudges but doesn't force.
+
+### LLD — what's new
+
+| File | Symbol | Responsibility |
+|---|---|---|
+| `memory/long_term.py` | `remember(fact, category)` | Embed + upsert one fact into the LTM Qdrant collection |
+| `memory/long_term.py` | `recall(query, k)` | Semantic search over stored facts |
+| `memory/long_term.py` | `_store()` | Lazily creates the LTM collection (dims from `config.yaml`'s `embeddings.dims`) on first use |
+| `agent/tools.py` | `remember` / `recall` (`@tool`-wrapped) | Agent-callable wrappers, logged like every other tool call |
+| `agent/factory.py` | `build_agent()` | Registers both tools; system prompt updated |
+
+### HLD — how a fact gets saved and later recalled
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Agent as LangGraph agent
+    participant LLM
+    participant Recall as recall tool
+    participant Remember as remember tool
+    participant Qdrant as Qdrant (claude_agent_lab_memory)
+
+    Note over User,Qdrant: Session 1 — saving a fact
+    User->>Agent: "Remember that I prefer early returns."
+    Agent->>LLM: model turn
+    LLM-->>Agent: tool call: remember(fact, category)
+    Agent->>Remember: run
+    Remember->>Qdrant: embed + upsert
+    Remember-->>Agent: "Saved."
+    Agent-->>User: confirms
+
+    Note over User,Qdrant: Session 2 (different thread_id) — later
+    User->>Agent: "How should I structure error handling?"
+    Agent->>LLM: model turn
+    LLM-->>Agent: tool call: recall(query)
+    Agent->>Recall: run
+    Recall->>Qdrant: similarity_search_with_score
+    Qdrant-->>Recall: ranked facts
+    Recall-->>Agent: "- User prefers early returns..."
+    Agent->>LLM: model turn (with recalled fact in context)
+    LLM-->>Agent: final answer, informed by session 1
+    Agent-->>User: answer
+```
+
+### Verified before writing docs
+
+Ran `remember`/`recall` directly against a live Qdrant instance (not mocked): saved two facts ("user prefers early returns over nested if/else," "this project uses Poetry, not pip"), then queried with two different questions. The style-preference fact ranked first for an error-handling query (score 0.30 vs 0.08); the Poetry fact ranked first for a package-installation query (score 0.15 vs -0.20) — confirming real semantic ranking, not just successful writes. Confirmed via `curl localhost:6333/collections` that `claude_agent_lab_memory` exists as a collection distinct from the code index (`claude_agent_lab`).
+
+### Open items
+
+- No automatic promotion from short-term to long-term memory — the model has to decide to call `remember`; nothing scans a session's history afterward and extracts facts automatically. That's a deliberate scope cut (see Architecture Decisions above), not an oversight, but worth knowing if facts seem to go unsaved: it means the model judged them not worth remembering, or wasn't asked to.
+- No de-duplication or forgetting mechanism — `remember` always inserts a new point; saving a contradicting preference twice leaves both in the collection and `recall` may surface either depending on ranking. No expiry (unlike the semantic cache's `ttl`).
+- `category` is a free-text string the model chooses, not a fixed enum — consistent (`"style"`, `"convention"`) in testing so far, but nothing enforces it.
+
+### Interview questions
+
+1. Why does this feature use a second Qdrant collection instead of a second collection *type* (e.g. a payload filter on the existing code-index collection)?
+2. What's the actual risk of `remember` having no de-duplication — walk through what `recall` returns if the user states the same preference twice, worded differently?
+3. Why was automatic fact-recall on every turn rejected in favor of an explicit `recall` tool call — what's the concrete cost difference?
+4. What happens if the LLM never calls `recall` even though a relevant fact exists — is that a silent failure, and how would you notice it happened?
+5. Why does `_store()` recreate a `QdrantClient` connection on every call to `remember`/`recall` instead of caching one? Is that consistent with the rest of this codebase's Qdrant usage?
+6. What would break if `long_term_memory.collection_name` in `config.yaml` were accidentally set to the same value as `qdrant.collection_name`?
+7. Why does `remember`'s docstring explicitly tell the model *not* to use it for one-off details — what would happen to the collection over many sessions if it did?
+8. How does this feature's embedding dependency (`config['embeddings']['dims']`) create a coupling between `long_term_memory` and the code-index config — what happens if you switch `embeddings.provider` after facts are already stored?
+9. Why is this considered "new design" rather than a port, when `memory/session.py` and `memory/short_term.py` in the same directory *are* ports?
+10. What's the actual difference between what `search_codebase` retrieves and what `recall` retrieves — could they share a retriever abstraction, and why don't they here?
+11. If two different users ran this CLI against the same Qdrant instance, what would go wrong with long-term memory specifically (see `docs/prd.md`'s single-user assumption)?
+12. Why does `recall`'s tool description say "searches across every past session" — what data structure actually makes that true, given `thread_id` scoping doesn't apply here at all?
+13. What would a "forgetting" mechanism need to look like for this store, and why doesn't one exist yet?
+14. Walk through exactly what happens in Qdrant if `remember` is called before the `claude_agent_lab_memory` collection exists — which function creates it, and with what vector configuration?
+15. Why does `category` default to `"general"` instead of being a required parameter?
