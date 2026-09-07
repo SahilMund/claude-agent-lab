@@ -6,7 +6,7 @@ Each phase's design decisions, tradeoffs, and real bugs found along the way are 
 
 ## Status
 
-**Fully built and verified working end to end** — indexing, retrieval, and the agent all tested against a live Qdrant instance and real MCP servers (not just "it imports").
+The core pipeline is built and verified against real infrastructure — indexing, retrieval, and the agent all tested against a live Qdrant instance and real MCP servers (not just "it imports"). The CLI (`main.py`) is the only interface.
 
 What's here:
 - **Config** (`config.py`, `config.yaml`) — plain YAML, loaded once at import time. `.env` for secrets.
@@ -20,7 +20,7 @@ What's here:
 - **Skills** (`skills/`) — a skill registry loaded as agent tools.
 - File watcher (`context/indexers/watcher.py`) — re-invalidates the semantic cache when the codebase changes. **Known gap:** hardcoded to Chroma's per-file update functions regardless of `vector_store.provider` — with this project's Qdrant default, file changes don't actually reach the live index; only a full re-index (`/reindex`) does. Left as-is and documented rather than silently patched — see `docs/progress.md`.
 
-**Not here:** a Phase 8 dashboard (FastAPI backend + React/Vite frontend) was built at one point and has since been removed — it never reached the reliability bar the rest of this project holds itself to, and added a second UI surface for something the CLI already covers. The REPL (`main.py`) is the only interface. See `docs/progress.md`'s Phase 8 entry for the original build writeup, kept as history.
+**Out of scope:** a web dashboard. The CLI covers the same functionality and is the only supported interface. (History of what was tried: `docs/progress.md`.)
 
 ## System design walkthrough
 
@@ -195,7 +195,7 @@ See `docs/progress.md` for the full writeup, including what was *not* changed an
 | 5 | MCP tool integration | Built, verified (GitHub + filesystem servers, 40 tools) |
 | 6 | Agentic task planner | Built |
 | 7 | Production concerns (cache, watcher, skills) | Built |
-| 8 | Dashboard UI (FastAPI + React) | Built, then removed — added a second UI surface that didn't hold up; the REPL stays the only interface |
+| 8 | Dashboard UI (FastAPI + React) | Removed — see `docs/progress.md` |
 
 Full detail: `docs/prd.md`.
 
