@@ -102,6 +102,7 @@ Real bugs found and fixed while porting, not hypothetical:
 3. **`config.yaml` had a duplicate `vector_store:` key** (the second silently overwrote the first) — consolidated into one block.
 4. **Missing `sentence-transformers` dependency** — required by `langchain_huggingface.HuggingFaceEmbeddings` at runtime but not declared in `pyproject.toml`.
 5. **A blank `QDRANT_API_KEY=` in `.env` silently forces HTTPS against a local Qdrant, causing an `SSL: WRONG_VERSION_NUMBER` error** — `qdrant-client` treats "empty string" and "not provided" as different states (only `None` skips the HTTPS inference), and `os.getenv()` returns `""` for a blank env line, not `None`. Fixed at all four call sites (`context/{indexers,retrievers}/{semantic,hybrid}_qdrant.py`) with `os.getenv(...) or None`. Found by a user actually running the CLI per this README's own instructions — see `docs/progress.md` for how it was actually diagnosed.
+6. **MCP tools reconnected — and for `stdio` servers, respawned their subprocess — on every single tool call**, not once per app run, because `MultiServerMCPClient.get_tools()` opens a new session per call by design. Fixed by opening one session per server and keeping it alive for the app's lifetime via an `AsyncExitStack`. Found by noticing `Secure MCP Filesystem Server running on stdio` printing repeatedly mid-conversation instead of once at startup — this was the actual cause of `/ask` feeling slow, not LLM latency.
 
 See `docs/progress.md` for the full writeup, including what was *not* changed and why.
 

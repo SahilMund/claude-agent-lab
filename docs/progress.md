@@ -393,3 +393,64 @@ The mechanism here is genuinely non-obvious: `"" or None` is a familiar Python i
 8. If `.env.example` instead didn't include `QDRANT_API_KEY=` as a line at all (left it out entirely rather than blank), would this bug still exist? Why or why not?
 9. What's the general lesson here about library constructors that infer behavior from "was an optional argument given" — where else in this codebase might the same class of bug be hiding?
 10. Why does this bug specifically only affect people following the README's own recommended local-Qdrant setup, rather than everyone who runs the CLI?
+
+---
+
+## Bug fix — MCP tools reconnecting (and respawning subprocesses) on every single call
+
+**Branch:** `perf-mcp-persistent-sessions` (off `main`)
+**Date:** 2026-09-07
+
+### In plain terms
+
+`/ask` was slow — several seconds per turn — and the logs showed why: `Secure MCP Filesystem Server running on stdio` printing over and over, once per tool call, instead of once at startup. Every time the agent used a filesystem MCP tool, it was spawning a brand-new `npx @modelcontextprotocol/server-filesystem` subprocess from scratch, doing the MCP handshake, running one tool call, then throwing the whole thing away — repeated for every tool call in a turn. `npx` cold starts are slow (package resolution + Node startup), so this dominated the actual LLM latency by a wide margin.
+
+Separately, `langchain-google-genai` was logging two `WARNING` lines per tool per agent step (`Key 'additionalProperties' is not supported in schema, ignoring` / `Key '$schema' is not supported in schema, ignoring`) — harmless (Gemini's function-calling API rejects those two JSON-Schema keys, and the library strips them before sending), but with ~15 tools bound, that's 30 lines of noise on every single step. Silenced alongside the real fix since both surfaced in the same debugging session.
+
+### The actual bug
+
+`mcp/mcp_client.py` called `MultiServerMCPClient.get_tools()` — the library's own docstring says outright: *"A new session will be created for each tool call."* That's fine for an HTTP-based MCP server (a new connection is cheap), but for a `stdio` transport server, "new session" means "new subprocess." `build_agent()` is only called once at startup, so this wasn't obvious from reading the code — the respawn-per-call behavior is internal to how `langchain-mcp-adapters` wraps the tools it returns, not something visible in this codebase's own call sites.
+
+### How this was actually found
+
+Diagnosed from the log pattern itself, not by reading `langchain-mcp-adapters`' source first: the repeating `Secure MCP Filesystem Server running on stdio` block, appearing every few seconds during a single `/ask` call rather than once at process startup, was the concrete signal that something was reconnecting mid-turn. That led directly to `MultiServerMCPClient.get_tools()`'s docstring, which states the per-call-session behavior explicitly — confirmed by inspecting the installed `langchain-mcp-adapters==0.3.2` source directly (`inspect.getsource`) rather than assuming behavior from the API surface.
+
+### The fix
+
+Open one session per configured MCP server via `client.session(server_name)`, kept alive for the life of the app by registering it on an `AsyncExitStack` the caller (`main.py`'s REPL loop, `api/app.py`'s FastAPI `lifespan`) already holds open across its own runtime — the exact same lifetime the LangGraph `AsyncSqliteSaver` checkpointer already uses. `build_agent()` now takes that `exit_stack` as a parameter instead of managing MCP connections internally.
+
+```python
+async def get_agent_mcp_tools(exit_stack: AsyncExitStack) -> list:
+    configs = load_mcp_configs()
+    client = MultiServerMCPClient(configs)
+    tools = []
+    for server_name in configs:
+        session = await exit_stack.enter_async_context(client.session(server_name))
+        tools.extend(await load_mcp_tools(session))
+    return tools
+```
+
+### Verified before and after
+
+Called the same filesystem MCP tool three times in a row in an isolated script: **before** the fix, `Secure MCP Filesystem Server running on stdio` printed on every call; **after**, it printed exactly once, at connection time, with all three tool calls succeeding against the same live session.
+
+### Architecture decision
+
+**Thread an `AsyncExitStack` through `build_agent()`, rather than have `mcp_client.py` manage its own global session lifecycle**
+- *Problem:* MCP sessions need to live exactly as long as the app process (or the FastAPI app), and be cleanly closed on shutdown — the same lifetime constraint `AsyncSqliteSaver.from_conn_string(...)` already has, which is why it's used via `async with` in both `main.py` and `api/app.py`.
+- *Options considered:* (a) a module-level global client/session in `mcp_client.py`, opened lazily and never explicitly closed; (b) pass an `AsyncExitStack` down from the same `async with` block that already owns the checkpointer's lifetime.
+- *What was chosen:* (b).
+- *Tradeoff:* A module-level global would need less code at each call site, but ties MCP session cleanup to interpreter exit rather than to an explicit `async with` scope — fine for a long-running singleton process, but wrong for the FastAPI app, where `lifespan()`'s whole point is well-defined startup/shutdown. Reusing the exit stack the caller already holds open for the checkpointer keeps both resources' lifetimes explicit and symmetric, at the cost of one extra parameter threaded through `build_agent()` and `get_agent_mcp_tools()`.
+
+### Interview questions
+
+1. Why does `MultiServerMCPClient.get_tools()` open a new session per tool call instead of per app run — what would `langchain-mcp-adapters` have to assume about server state to do otherwise safely?
+2. For an HTTP-transport MCP server instead of `stdio`, would this bug still cause a meaningful slowdown? Why or why not?
+3. What was the actual log-level signal that pointed at MCP reconnection rather than, say, slow LLM calls or slow embedding?
+4. Why register the MCP session on the *caller's* `AsyncExitStack` rather than have `get_agent_mcp_tools()` open and manage its own?
+5. What happens to an open MCP session if the process crashes without going through `AsyncExitStack.__aexit__`? Does anything leak?
+6. Why does `main.py`'s `AsyncExitStack` sit in the same `async with (...)` statement as `AsyncSqliteSaver.from_conn_string(...)` rather than a separate nested block?
+7. If a second MCP server were added to `mcp_servers.json`, does anything about this fix need to change, or does it scale automatically?
+8. Why was `inspect.getsource()` used to read `langchain-mcp-adapters`' actual installed source rather than trusting its public documentation or type hints?
+9. What's the tradeoff of silencing `langchain_google_genai._function_utils` warnings at the logger level versus fixing the tool schemas themselves so `additionalProperties`/`$schema` are never generated in the first place?
+10. Could this same per-call-reconnection bug exist anywhere else in this codebase that also wraps a "stateless" client API without realizing it opens a new connection per call?

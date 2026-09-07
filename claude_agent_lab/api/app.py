@@ -8,7 +8,7 @@ backend, not two backends that happen to agree.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -36,10 +36,16 @@ async def lifespan(app: FastAPI):
     repo_path = str(Path.cwd())
     logger.info(f"API starting up — indexing {repo_path}")
 
-    async with AsyncSqliteSaver.from_conn_string(get_checkpointer_db_path()) as checkpointer:
+    async with (
+        AsyncSqliteSaver.from_conn_string(get_checkpointer_db_path()) as checkpointer,
+        AsyncExitStack() as exit_stack,
+    ):
         app.state.repo_path = repo_path
         app.state.index = get_indexer()(repo_path)
-        app.state.agent = await build_agent(checkpointer)
+        # `exit_stack` keeps MCP tool sessions open for the API's whole
+        # lifetime instead of reconnecting (respawning stdio subprocesses)
+        # on every tool call — see mcp/mcp_client.py.
+        app.state.agent = await build_agent(checkpointer, exit_stack)
         app.state.session_id = get_current_session()
 
         semantic_cache = await build_semantic_cache()
