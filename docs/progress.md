@@ -666,3 +666,141 @@ Question-only — meant as prompts to answer out loud or in writing, not a Q&A k
 18. Where would streaming output plug into `handle_ask`'s current one-shot `llm_client.complete(...)` call?
 19. If this project later wants `/index` to also work incrementally (only re-index changed files), what information would it need to track that it doesn't track today?
 20. What's the smallest change you'd make to turn `/ask` into something closer to a real "agent" (Phase 3), rather than a single retrieve-then-answer call?
+
+---
+
+## Phase 3 — Agent orchestration (manual tool-use loop, filesystem tools)
+
+**Branch:** `phase-3-agent-core` (off `main`)
+**Date:** 2026-09-07
+
+### In plain terms
+
+Up to now, every command in this project has been "one question, one answer" — even `/ask` only searches once and answers once. This slice adds the first genuinely *agentic* behavior: the model can now decide, on its own, to look at a file or a directory listing before answering — and do that more than once if it needs to — instead of only ever seeing whatever a human-written retrieval step handed it.
+
+Concretely: a new `/agent <goal>` command gives the model two tools — "read this file" and "list what's in this directory" — and lets it use them however many times it wants (up to a safety limit) before giving a final answer. This is the actual mechanic behind things like "explain what this function does" without anyone having to first figure out which file that function lives in.
+
+**One deliberate scope cut, flagged rather than done quietly:** the PRD's Phase 3 row calls for "filesystem/terminal tools." This slice only ships the filesystem half — a tool that lets the model run arbitrary shell commands is a meaningfully bigger safety surface (arbitrary command execution, not just reading text), and the PRD's own Phase 6 already plans an approval/recovery flow before an agent takes consequential actions. Shipping unrestricted shell execution now, ahead of any approval gate, would be building the risky part before the safety mechanism that's supposed to sit in front of it. Terminal tools are pushed to a later, explicitly-scoped slice instead of bundled in here by default.
+
+### What changed
+
+- **`llm/base.py`** — `LLMClient` gains `complete_with_tools(messages, tools, *, system=None) -> ToolCallResult`, alongside (not replacing) Phase 1's `complete()`. New types: `ToolCall` (id, name, input) and `ToolCallResult` (stop_reason, text, tool_calls, raw_content). This is exactly the extension point Phase 1's own code comment predicted: *"[response details] surface here only once a later phase (agent orchestration...) actually needs them."*
+- **`llm/anthropic_client.py`** — refactored to share one `_create_message` helper (and its exception-to-`RuntimeError` mapping) between `complete()` and the new `complete_with_tools()`, instead of duplicating the six-exception-type chain. Also fixed a latent bug this refactor exposed: the original code always passed `system=system` even when `None`, which — had a caller ever actually done that — would have sent a literal `system: null` in the request instead of omitting the field; both `system` and now `tools` are only included in the request when actually provided.
+- **`agent/tools.py`** (new) — `Tool` (name, description, JSON schema, Python handler), `ToolError`, and two read-only filesystem tools: `read_file` and `list_directory`, both routed through `_resolve_within_root` — a real path-traversal guard, not just a naming convention (see Architecture Decision 3).
+- **`agent/orchestrator.py`** (new) — `Orchestrator.run(goal)`: the manual tool-use loop. Calls `complete_with_tools`, executes any `tool_use` blocks via the matching `Tool`, feeds `tool_result` blocks back, repeats until the model stops calling tools or a hard iteration cap is hit.
+- **`agent/factory.py`** (new) — `build_agent(settings, root=...)`, mirroring `llm/factory.py`'s job of turning `Settings` into a ready-to-use object.
+- **Config** — new `AgentConfig` (`max_tool_iterations`), wired into the existing env-override mechanism.
+- **`main.py`** — new `/agent <goal>` command.
+- **Tests**: `tests/test_agent_tools.py` (15 tests: path-traversal rejection via both `..` and absolute paths, truncation, empty directories, error cases) and `tests/test_orchestrator.py` (6 tests, using a scripted fake `LLMClient` to drive exact multi-turn scenarios without a real API call: tool execution, unknown-tool handling, tool-failure handling, the iteration cap, and LLM-failure propagation).
+
+### Architecture decisions
+
+**1. A manual tool-use loop, not the Anthropic SDK's Tool Runner**
+- *In plain terms:* The Anthropic SDK actually ships a helper (`tool_runner`) that writes this loop for you. This project wrote it by hand instead.
+- *Problem:* Need something that repeatedly calls the model, runs whatever tool it asks for, and feeds the result back, until it's done.
+- *Options considered:* the SDK's beta `tool_runner` helper; a hand-written loop calling `client.messages.create` directly.
+- *What was chosen:* the hand-written loop (`Orchestrator`).
+- *Tradeoff:* The Tool Runner is less code and handles edge cases (like `pause_turn` resumption) that this project's manual loop doesn't. Writing it by hand costs more code and more edge cases to think through personally — which is the entire point, per this project's own stated goal (`docs/prd.md`): understanding the orchestration loop by building it, not by calling a library that hides it. The Tool Runner is also still in beta in the Python SDK; avoiding that dependency was a secondary, smaller factor.
+
+**2. Extending `LLMClient` with `complete_with_tools`, instead of the agent talking to the Anthropic SDK directly**
+- *In plain terms:* The orchestrator could have imported `anthropic` itself and made API calls directly. Instead, it only knows about `LLMClient` — the same interface Phase 1 built for plain chat — just with one more method on it.
+- *Problem:* Tool use needs `stop_reason` and structured `tool_use` blocks that Phase 1's `complete() -> str` has no way to express.
+- *Options considered:* have `agent/orchestrator.py` import `anthropic` and build its own request/response handling; add a second method to the existing `LLMClient` protocol that exposes what tool use actually needs.
+- *What was chosen:* the second option.
+- *Tradeoff:* `ToolCallResult.raw_content` is explicitly provider-native (the Anthropic SDK's own content-block objects, not a type this project owns) — round-tripping it unchanged into the next request is exactly what the SDK's own documented manual-loop pattern does, but it means a second LLM provider would need to produce something compatible with what `messages.create()` expects back, or this abstraction leaks. Accepted rather than solved: designing a fully provider-agnostic tool-call content schema for a project with exactly one provider would be solving a problem this project doesn't have yet. If a second provider is ever added, this is exactly where that design work would actually happen.
+
+**3. Sandboxing filesystem tools to a root directory — a real security boundary, not a convention**
+- *In plain terms:* Both filesystem tools check that any path they're given actually resolves to somewhere inside the project folder before touching the filesystem — including catching `../../etc/passwd`-style tricks and absolute paths pointing elsewhere.
+- *Problem:* The model chooses what path to pass to `read_file`/`list_directory`. Nothing stops it from asking for `/etc/passwd` or `~/.ssh/id_rsa` unless something actively checks.
+- *Options considered:* trust the model's system prompt instructions alone ("only read files in the project"); resolve every path and verify containment in code before any filesystem access.
+- *What was chosen:* code-level containment check (`_resolve_within_root`), tested directly against both a `..`-relative escape attempt and an absolute-path escape attempt.
+- *Tradeoff:* None, really — a prompt-only restriction is not a security boundary (prompts are instructions, not enforcement), and the code-level check costs a few lines and one small helper function. This is a case where there wasn't a real tradeoff to weigh, which is itself worth writing down: not every decision here is a close call.
+
+**4. Filesystem tools now; terminal/shell execution deliberately deferred**
+- *In plain terms:* covered above in "In plain terms" — repeated here because it's a real architecture decision, not just a status update.
+- *Problem:* The PRD's Phase 3 row names both filesystem and terminal tools as the deliverable.
+- *Options considered:* ship both tool categories in this slice; ship filesystem tools now and stage terminal/shell execution as its own later slice with its own explicit safety design (allowlisted commands? a confirmation step? scoped to the same root?).
+- *What was chosen:* filesystem only, this slice.
+- *Tradeoff:* Doesn't fully satisfy the PRD's Phase 3 row yet — flagged here and in `README.md`'s Limitations rather than left implicit. In exchange, shell execution gets the design attention it actually needs (what can it run, does it need approval, how does a failing command get reported back) instead of being bolted on alongside filesystem tools just to check a box.
+
+**5. A hard iteration cap, independent of the model's own judgment**
+- *In plain terms:* No matter how the conversation goes, the loop gives up after a fixed number of tool-use rounds (10 by default) rather than trusting the model to always eventually stop.
+- *Problem:* A confused or looping model could in principle keep calling tools indefinitely, burning API calls and never returning control to the user.
+- *Options considered:* no cap (trust `stop_reason` to eventually be something other than `tool_use`); a hard cap independent of the model's behavior.
+- *What was chosen:* a hard cap (`AgentConfig.max_tool_iterations`), configurable but always present.
+- *Tradeoff:* A legitimately long, correct multi-step task could hit the cap and get cut off with an error instead of an answer. Accepted for now — 10 is a generous default for the two-tool, filesystem-only agent this slice actually ships, and it's a config value, not a hardcoded constant, precisely because it will need revisiting as the tool set grows.
+
+### HLD — how this phase's concern would be designed from a blank page
+
+```mermaid
+flowchart TD
+    Start(["/agent goal"]) --> Call["complete_with_tools(messages, tools)"]
+    Call -- RuntimeError --> Err(["return [error] ..."])
+    Call -- ok --> Check{"stop_reason\n== tool_use?"}
+    Check -- no --> Done(["return result.text"])
+    Check -- yes --> Append["append assistant turn\n(raw_content) to messages"]
+    Append --> ForEach["for each tool_call:"]
+    ForEach --> Known{"tool name\nregistered?"}
+    Known -- no --> ErrResult["tool_result,\nis_error=true"]
+    Known -- yes --> Run["run tool.handler(input)"]
+    Run -- ToolError --> ErrResult
+    Run -- ok --> OkResult["tool_result"]
+    ErrResult --> Collect["collect all tool_results"]
+    OkResult --> Collect
+    Collect --> AppendResults["append as one user turn"]
+    AppendResults --> Cap{"under max_iterations?"}
+    Cap -- yes --> Call
+    Cap -- no --> GiveUp(["return [error] gave up ..."])
+```
+
+### LLD — classes/functions/data flow introduced this phase
+
+| Module | Symbol | Responsibility |
+|---|---|---|
+| `llm/base.py` | `ToolCall`, `ToolCallResult` | Structured shape of one tool-enabled completion turn |
+| `llm/base.py` | `LLMClient.complete_with_tools` | New protocol method alongside `complete()` |
+| `llm/anthropic_client.py` | `_create_message` | Shared request + exception-mapping helper for both `complete()` and `complete_with_tools()` |
+| `agent/tools.py` | `Tool`, `ToolError` | A callable tool plus its API schema; the exception a handler raises on failure |
+| `agent/tools.py` | `_resolve_within_root(root, path_str)` | The path-traversal security boundary every filesystem tool routes through |
+| `agent/tools.py` | `make_read_file_tool`, `make_list_directory_tool`, `default_tools` | Concrete tools and the default set the factory wires up |
+| `agent/orchestrator.py` | `Orchestrator.run(goal) -> str` | The tool-use loop |
+| `agent/factory.py` | `build_agent(settings, root) -> Orchestrator` | Settings → ready-to-use `Orchestrator` |
+| `config.py` | `AgentConfig` | `max_tool_iterations` |
+
+**Data flow:** a goal string → `Orchestrator.run` → `LLMClient.complete_with_tools` → either a final answer, or one or more `Tool.handler` calls whose results get fed back as the next turn's input → eventually a final answer (or a capped-out error).
+
+### Interview questions
+
+Question-only — meant as prompts to answer out loud or in writing, not a Q&A key.
+
+**The tool-use loop**
+1. Why does `Orchestrator.run` check `stop_reason != "tool_use"` to decide when to stop, instead of checking whether `tool_calls` is empty?
+2. What's actually inside `messages` after one full round-trip (a tool call, then its result)? Walk through what gets appended and by what.
+3. Why does the assistant turn append `result.raw_content` (not `result.text`) back into `messages`?
+4. What happens if the model returns two tool calls in the same turn — does the loop handle that, and how?
+5. Why is `max_iterations` a hard stop instead of, say, warning the model it's close to a limit?
+6. What real, legitimate task could this default cap (10) cut off before it finishes?
+
+**Tool design & safety**
+7. Walk through exactly what `_resolve_within_root` does with the input `"../../etc/passwd"`, step by step.
+8. Why does `_resolve_within_root` need to handle absolute paths as a separate case from relative ones?
+9. What's the difference between "the model was told in its system prompt to stay in the project folder" and "the code enforces it" — why does that difference matter here?
+10. Why does `read_file` truncate large files instead of just returning everything or refusing to read them at all?
+11. Why does `list_directory` mark subdirectories with a trailing `/` in its output?
+12. What does `ToolError` actually accomplish that a regular Python exception wouldn't?
+13. If a tool's handler raised a `KeyError` instead of a `ToolError`, what would happen in `Orchestrator._execute`? Is that the right behavior?
+14. Why does `Tool.to_api_schema()` exist as a separate method instead of just sending the whole `Tool` object (with its `handler` function) to the API?
+
+**Interface design**
+15. Why did `complete_with_tools` get added as a *second* method on `LLMClient` instead of replacing `complete()` entirely?
+16. What would break for `main.py`'s `/ask` and plain-chat code paths if `complete()` were deleted and everything had to go through `complete_with_tools()`?
+17. Why is `ToolCallResult.raw_content` typed as `Any` instead of a properly-typed structure?
+18. What specifically would need to happen to `ToolCallResult` if a second, non-Anthropic `LLMClient` were added that also needed to support tools?
+19. Why did refactoring `AnthropicLLMClient` around a shared `_create_message` helper matter beyond just "less duplicate code" — what actual latent bug did it fix?
+
+**Scope & tradeoffs**
+20. Why does this slice ship filesystem tools but not the terminal/shell tool the PRD's Phase 3 row also names?
+21. What would a minimal, safety-conscious terminal tool need that `read_file`/`list_directory` don't (think about what could go wrong that reading a file can't)?
+22. Where does the PRD's planned Phase 6 approval/recovery flow eventually connect to what's built in this slice?
+23. What's the blast radius of adding a third filesystem tool (say, `write_file`) — which files change, and does the security boundary in `_resolve_within_root` cover it automatically or need its own new checks?
+24. If `/agent` needed to remember what it learned across multiple separate `/agent` calls in the same session, what's missing today to support that (hint: look at where `messages` lives in `Orchestrator.run`)?

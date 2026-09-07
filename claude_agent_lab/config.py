@@ -46,6 +46,7 @@ _ENV_OVERRIDES: dict[str, tuple[str | None, str]] = {
     "VECTOR_STORE_PATH": ("vector_store", "path"),
     "VECTOR_STORE_COLLECTION_NAME": ("vector_store", "collection_name"),
     "RETRIEVAL_RRF_K": ("retrieval", "rrf_k"),
+    "AGENT_MAX_TOOL_ITERATIONS": ("agent", "max_tool_iterations"),
     "LOG_LEVEL": (None, "log_level"),
 }
 
@@ -103,12 +104,24 @@ class RetrievalConfig(BaseModel):
     rrf_k: int = 60
 
 
+class AgentConfig(BaseModel):
+    """Agent orchestration tuning (Phase 3).
+
+    `max_tool_iterations` is a hard cap on the tool-use loop, independent of
+    anything the model itself decides — a safety net against a confused
+    loop running forever, not a tuning knob for quality.
+    """
+
+    max_tool_iterations: int = 10
+
+
 class Settings(BaseModel):
     llm: LLMConfig = LLMConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
     chunking: ChunkingConfig = ChunkingConfig()
     vector_store: VectorStoreConfig = VectorStoreConfig()
     retrieval: RetrievalConfig = RetrievalConfig()
+    agent: AgentConfig = AgentConfig()
     log_level: str = "INFO"
 
     anthropic_api_key: str | None = None
