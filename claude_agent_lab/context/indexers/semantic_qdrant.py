@@ -23,7 +23,8 @@ def index_codebase(repo_path: str) -> QdrantVectorStore:
    # api_key is anything other than None — including "". A blank QDRANT_API_KEY=
    # line in .env (the common case for a local Qdrant with no auth) makes
    # os.getenv() return "", which silently switches the client to HTTPS against
-   # a plain-HTTP local server and fails with an opaque SSL error.
+   # a plain-HTTP local server and fails with an opaque SSL error. Found by
+   # actually running this against a local Qdrant instance.
    url = os.getenv("QDRANT_URL") or None
    api_key = os.getenv("QDRANT_API_KEY") or None
 
