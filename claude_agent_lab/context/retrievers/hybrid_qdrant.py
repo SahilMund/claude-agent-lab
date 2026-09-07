@@ -27,12 +27,15 @@ def retrieve(query: str, k: int = 5) -> list[dict]:
    retrieval_mode = RETRIEVAL_MODE_MAP.get(mode, RetrievalMode.HYBRID)
 
 
+   # `or None`, not a bare os.getenv() — QdrantClient infers https=True for
+   # any non-None api_key, including "", which breaks a local,
+   # unauthenticated Qdrant instance. See context/indexers/semantic_qdrant.py.
    vector_store = QdrantVectorStore.from_existing_collection(
        embedding=embedder,
        sparse_embedding=FastEmbedSparse(model_name="Qdrant/bm25"),
        retrieval_mode=retrieval_mode,
-       url=os.getenv("QDRANT_URL"),
-       api_key=os.getenv("QDRANT_API_KEY"),
+       url=os.getenv("QDRANT_URL") or None,
+       api_key=os.getenv("QDRANT_API_KEY") or None,
        collection_name=collection_name,
    )
 

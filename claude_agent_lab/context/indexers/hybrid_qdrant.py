@@ -36,8 +36,11 @@ def index_codebase(repo_path: str) -> QdrantVectorStore:
    """
    embedder = get_embedder()
    collection_name = config["qdrant"]["collection_name"]
-   url = os.getenv("QDRANT_URL")
-   api_key = os.getenv("QDRANT_API_KEY")
+   # `or None`, not a bare os.getenv() — see semantic_qdrant.py's index_codebase
+   # for why: QdrantClient infers https=True for any non-None api_key,
+   # including "", which breaks a local, unauthenticated Qdrant instance.
+   url = os.getenv("QDRANT_URL") or None
+   api_key = os.getenv("QDRANT_API_KEY") or None
    retrieval_mode = _get_retrieval_mode()
 
 
