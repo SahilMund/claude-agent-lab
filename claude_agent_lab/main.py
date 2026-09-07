@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import AsyncExitStack
 from pathlib import Path
 from dotenv import load_dotenv
 from rich.console import Console
@@ -32,7 +33,7 @@ def get_or_create_index():
     return get_indexer()(repo_path)
 
 
-async def initialize(checkpointer):
+async def initialize(checkpointer, exit_stack: AsyncExitStack):
     """Bootstrap LLM, embedder, index, watcher, MCP tools, cache, and session before the REPL starts."""
     llm      = get_llm()
     embedder = get_embedder()
@@ -58,7 +59,7 @@ async def initialize(checkpointer):
             )
 
     observer   = start_watcher(repo_path, on_change=_invalidate_cache_on_change)
-    agent      = await build_agent(checkpointer)
+    agent      = await build_agent(checkpointer, exit_stack)
     session_id = get_current_session()
     console.print(f"[dim]Session: {session_id}[/dim]")
     console.print(f"[green]✓ Ready[/green]\n")
@@ -69,8 +70,11 @@ async def _run_async():
     logger.info("Starting claude_agent_lab")
     console.print("\n[bold blue]claude_agent_lab[/bold blue] — RAG-powered code assistant")
 
-    async with AsyncSqliteSaver.from_conn_string(get_checkpointer_db_path()) as checkpointer:
-        llm, embedder, index, agent, session_id, observer, semantic_cache, cache_domain = await initialize(checkpointer)
+    async with (
+        AsyncSqliteSaver.from_conn_string(get_checkpointer_db_path()) as checkpointer,
+        AsyncExitStack() as exit_stack,
+    ):
+        llm, embedder, index, agent, session_id, observer, semantic_cache, cache_domain = await initialize(checkpointer, exit_stack)
         console.print("Type [bold]'/exit'[/bold] to quit\n")
 
         try:

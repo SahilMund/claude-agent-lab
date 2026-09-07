@@ -101,6 +101,7 @@ Real bugs found and fixed while porting, not hypothetical:
 2. **Byte-offset/character-offset bug in the code parser** — tree-sitter's `start_byte`/`end_byte` are UTF-8 *byte* offsets, but the code sliced the Python `str` (character-indexed) with them, silently corrupting every chunk's name and content as soon as a multi-byte character (em dash, arrow, smart quote — common throughout this codebase's own docstrings) appeared anywhere earlier in the file. Fixed by slicing the encoded bytes and decoding the result.
 3. **`config.yaml` had a duplicate `vector_store:` key** (the second silently overwrote the first) — consolidated into one block.
 4. **Missing `sentence-transformers` dependency** — required by `langchain_huggingface.HuggingFaceEmbeddings` at runtime but not declared in `pyproject.toml`.
+5. **MCP tools reconnected — and for `stdio` servers, respawned their subprocess — on every single tool call**, not once per app run, because `MultiServerMCPClient.get_tools()` opens a new session per call by design. Fixed by opening one session per server and keeping it alive for the app's lifetime via an `AsyncExitStack`. Found by noticing `Secure MCP Filesystem Server running on stdio` printing repeatedly mid-conversation instead of once at startup — this was the actual cause of `/ask` feeling slow, not LLM latency.
 
 See `docs/progress.md` for the full writeup, including what was *not* changed and why.
 

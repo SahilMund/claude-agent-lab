@@ -1,3 +1,5 @@
+from contextlib import AsyncExitStack
+
 from langchain.agents import create_agent
 
 from claude_agent_lab.llm.factory import get_llm
@@ -14,10 +16,16 @@ Always use the search_codebase tool before answering any question.
 Reference specific file names, function names and line numbers in your answers.
 If you cannot find the answer in the codebase, say so explicitly."""
 
-async def build_agent(checkpointer):
-   """Create and return a LangChain agent with persistent memory."""
+async def build_agent(checkpointer, exit_stack: AsyncExitStack):
+   """Create and return a LangChain agent with persistent memory.
+
+   `exit_stack` is the caller's `AsyncExitStack` (open for the app's whole
+   lifetime) — MCP tool sessions are registered on it so they stay open for
+   reuse across every tool call instead of reconnecting each time. See
+   mcp/mcp_client.py.
+   """
    llm = get_llm()
-   mcp_tools = await get_agent_mcp_tools()
+   mcp_tools = await get_agent_mcp_tools(exit_stack)
 
    skills_prompt = build_skills_prompt()
    full_prompt = SYSTEM_PROMPT
