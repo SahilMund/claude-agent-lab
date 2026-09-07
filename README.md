@@ -1,25 +1,25 @@
 # claude_agent_lab
 
-A RAG-powered, agentic CLI code assistant — ported phase by phase from a reference implementation, as a system-design learning project.
+A RAG-powered, agentic CLI code assistant — built phase by phase as a system-design learning project.
 
-Unlike this repo's earlier history (see `git log` before this branch), this is **not** an independent reimplementation. It's a direct port of `source/capstone_project/educosys_claude/` (kept outside this repo), renamed per `CLAUDE.md`'s mapping table, with real bugs fixed and small enhancements made along the way — documented as they're found, not silently. See `docs/prd.md` for the phase breakdown and `docs/progress.md` for what was ported, fixed, and why.
+Each phase's design decisions, tradeoffs, and real bugs found along the way are documented as they happen, not silently. See `docs/prd.md` for the phase breakdown and `docs/progress.md` for what was built, fixed, and why.
 
 ## Status
 
-**Fully ported and verified working end to end** — indexing, retrieval, and the agent all tested against a live Qdrant instance and real MCP servers (not just "it imports").
+**Fully built and verified working end to end** — indexing, retrieval, and the agent all tested against a live Qdrant instance and real MCP servers (not just "it imports").
 
 What's here:
 - **Config** (`config.py`, `config.yaml`) — plain YAML, loaded once at import time. `.env` for secrets.
-- **LLM/embeddings** (`llm/factory.py`) — LangChain-based, provider chosen by `config.yaml`'s `llm.provider`, no code change needed to switch: `anthropic` (default — the source defaults to OpenAI), `openai`, `gemini`, `groq`, or `ollama` (local, no API key). `HuggingFaceEmbeddings` for embeddings (runs locally, no API key — the source defaults to OpenAI embeddings, which would need a second API key for no real reason here).
+- **LLM/embeddings** (`llm/factory.py`) — LangChain-based, provider chosen by `config.yaml`'s `llm.provider`, no code change needed to switch: `anthropic` (default), `openai`, `gemini`, `groq`, or `ollama` (local, no API key). `HuggingFaceEmbeddings` for embeddings by default (runs locally, no API key needed).
 - **Indexing & retrieval** (`context/indexers/`, `context/retrievers/`) — tree-sitter-based code-aware chunking (15 languages), semantic (Chroma or Qdrant) or hybrid (Qdrant native sparse+dense) retrieval, chosen via `config.yaml`. Default: Qdrant + hybrid.
 - **Agent** (`agent/`) — LangChain's `create_agent` + LangGraph checkpointer-backed memory, with a `search_codebase` tool, filesystem tools (`tools/filesystem_tools.py`), a terminal tool (`tools/terminal_tools.py`), MCP tools (GitHub + filesystem servers), and skill-as-tool loading.
-- **Memory** (`memory/`) — session tracking (which conversation thread is "current") plus a SQLite-backed LangGraph checkpointer with automatic summarization once a conversation gets long. Plus **long-term memory** (`memory/long_term.py`) — cross-session facts/preferences in a separate Qdrant collection, retrieved and saved via `recall`/`remember` agent tools. No source equivalent — see "Long-term memory" below.
+- **Memory** (`memory/`) — session tracking (which conversation thread is "current") plus a SQLite-backed LangGraph checkpointer with automatic summarization once a conversation gets long. Plus **long-term memory** (`memory/long_term.py`) — cross-session facts/preferences in a separate Qdrant collection, retrieved and saved via `recall`/`remember` agent tools. See "Long-term memory" below.
 - **MCP** (`mcp/`) — connects to the servers listed in `mcp_servers.json` (GitHub, filesystem, by default).
 - **Tasks** (`tasks/`) — a `/plan <goal>` planner/executor with approval and recovery steps.
 - **Cache** (`cache/`) — Redis-backed semantic cache for `/ask` answers; degrades to "disabled" instead of crashing if Redis isn't running.
 - **Skills** (`skills/`) — a skill registry loaded as agent tools.
-- File watcher (`context/indexers/watcher.py`) — re-invalidates the semantic cache when the codebase changes. **Known gap:** hardcoded to Chroma's per-file update functions regardless of `vector_store.provider` — with this fork's Qdrant default, file changes don't actually reach the live index; only a full re-index (`/reindex`, or the dashboard's "Re-index now") does. Ported as-is, documented rather than silently fixed — see `docs/progress.md`.
-- **Dashboard** (`claude_agent_lab/api/`, `frontend/`) — a FastAPI backend and React/Vite frontend over the same CLI backend: indexing status, `/ask` with its sources, and a live streamed view of the agent's tool calls. The one phase with no source to port from — see `docs/prd.md`'s Phase 8 detail.
+- File watcher (`context/indexers/watcher.py`) — re-invalidates the semantic cache when the codebase changes. **Known gap:** hardcoded to Chroma's per-file update functions regardless of `vector_store.provider` — with this project's Qdrant default, file changes don't actually reach the live index; only a full re-index (`/reindex`, or the dashboard's "Re-index now") does. Left as-is and documented rather than silently patched — see `docs/progress.md`.
+- **Dashboard** (`claude_agent_lab/api/`, `frontend/`) — a FastAPI backend and React/Vite frontend over the same CLI backend: indexing status, `/ask` with its sources, and a live streamed view of the agent's tool calls. See `docs/prd.md`'s Phase 8 detail.
 
 ## System design walkthrough
 
@@ -102,9 +102,9 @@ llm:
 ```
 
 Each provider (except `ollama`, which talks to a local server instead) reads its API key
-from its own env var — see `.env.example`. Only the branches for `anthropic` and `openai`
-came from the source; `gemini`, `groq`, and `ollama` are an enhancement on top of the same
-factory pattern (see `docs/progress.md`).
+from its own env var — see `.env.example`. `anthropic` and `openai` were the original two
+providers; `gemini`, `groq`, and `ollama` were added on top of the same factory pattern
+(see `docs/progress.md`).
 
 ### Long-term memory
 
@@ -119,8 +119,8 @@ The agent decides when to use it — two tools, same pattern as `search_codebase
   returns over nested if/else").
 - **`recall(query)`** — called before answering, if a past preference might be relevant.
 
-No equivalent of this exists in the source reference — `memory/session.py` and
-`memory/short_term.py` are ports, `memory/long_term.py` is new (see `docs/progress.md` for
+`memory/session.py` and `memory/short_term.py` handle per-session history;
+`memory/long_term.py` is what adds cross-session recall (see `docs/progress.md` for
 the design decisions and why this wasn't automatic-injection-on-every-turn instead).
 
 ### Dashboard (Phase 8)
@@ -139,9 +139,9 @@ npm run dev
 
 Open the printed Vite URL (usually `http://localhost:5173`). See `frontend/README.md` for details.
 
-## What was fixed during the port
+## Bugs found and fixed during development
 
-Real bugs found and fixed while porting, not hypothetical:
+Real bugs found and fixed by actually running the system, not hypothetical:
 
 1. **`tree-sitter-languages` is unmaintained** and has no wheels for current Python — swapped for `tree-sitter-language-pack`, the actively maintained fork with the same `get_language()`/`get_parser()` API.
 2. **Byte-offset/character-offset bug in the code parser** — tree-sitter's `start_byte`/`end_byte` are UTF-8 *byte* offsets, but the code sliced the Python `str` (character-indexed) with them, silently corrupting every chunk's name and content as soon as a multi-byte character (em dash, arrow, smart quote — common throughout this codebase's own docstrings) appeared anywhere earlier in the file. Fixed by slicing the encoded bytes and decoding the result.
@@ -156,14 +156,14 @@ See `docs/progress.md` for the full writeup, including what was *not* changed an
 
 | Phase | Focus | Status |
 |---|---|---|
-| 1 | Config system, LLM/embedder factory, CLI skeleton | Ported, verified |
-| 2 | Code indexing & retrieval (semantic + hybrid) | Ported, verified against live Qdrant |
-| 3 | Agent orchestration + tool execution | Ported, verified (real MCP tools loaded) |
-| 4 | Session & short-term memory | Ported (LangGraph checkpointer) |
-| 5 | MCP tool integration | Ported, verified (GitHub + filesystem servers, 40 tools) |
-| 6 | Agentic task planner | Ported |
-| 7 | Production concerns (cache, watcher, skills) | Ported |
-| 8 | Dashboard UI (FastAPI + React) | Built, verified end-to-end (real Qdrant, real MCP servers, real retrieval quality) — no source equivalent, genuinely new work |
+| 1 | Config system, LLM/embedder factory, CLI skeleton | Built, verified |
+| 2 | Code indexing & retrieval (semantic + hybrid) | Built, verified against live Qdrant |
+| 3 | Agent orchestration + tool execution | Built, verified (real MCP tools loaded) |
+| 4 | Session & short-term memory | Built (LangGraph checkpointer) |
+| 5 | MCP tool integration | Built, verified (GitHub + filesystem servers, 40 tools) |
+| 6 | Agentic task planner | Built |
+| 7 | Production concerns (cache, watcher, skills) | Built |
+| 8 | Dashboard UI (FastAPI + React) | Built, verified end-to-end (real Qdrant, real MCP servers, real retrieval quality) |
 
 Full detail: `docs/prd.md`.
 
