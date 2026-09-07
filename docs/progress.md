@@ -355,6 +355,47 @@ Also verified, not assumed:
 
 ---
 
+## Bug fix — blank `QDRANT_API_KEY` silently forces HTTPS against a local Qdrant
+
+**Branch:** `fix-qdrant-https-inference` (off `main`)
+**Date:** 2026-09-07
+
+### In plain terms
+
+Running the CLI against a local Qdrant instance (exactly the setup `README.md` tells you to use) failed at startup with `SSL: WRONG_VERSION_NUMBER` — an error that looks like a TLS/certificate problem but isn't. The actual cause: `qdrant-client` decides whether to use HTTPS based on whether an API key was given, and it checks *"is this `None`?"*, not *"is this empty?"*. `.env.example` ships `QDRANT_API_KEY=` — a blank line, which `os.getenv()` reads back as `""`, not `None`. An empty string is enough to make the client assume you meant a real (HTTPS) Qdrant Cloud endpoint, and it tries to speak TLS to a local server that only speaks plain HTTP — hence the confusing SSL error instead of a connection-refused or an auth error.
+
+This wasn't found by reading the code — it was found because a user actually ran the CLI following the README's own instructions and hit it immediately.
+
+### How this was actually diagnosed (not guessed)
+
+1. Reproduced the exact failure in an isolated Python process against the user's real `.env` and `.venv` — confirmed it wasn't specific to their machine setup.
+2. Ruled out a leftover shell-exported `QDRANT_URL` (checked `env | grep -i qdrant` and every shell rc file — nothing) and ruled out a dependency-version difference (`httpx`/`httpcore`/`qdrant-client` versions matched a working test environment exactly).
+3. **The retest that actually found it:** re-ran the same reproduction that had worked minutes earlier — a fresh Qdrant container, same code — and it now failed *identically*, in a completely separate Python environment that had never touched the user's machine before. That ruled out anything user- or environment-specific and pointed at something environmental to the *test setup itself* (a stale/reused connection or client instance from earlier testing), which led directly to inspecting `QdrantClient`'s actually-computed connection URL rather than continuing to guess at network causes.
+4. Printed `client._client.rest_uri` directly and caught it in the act: `https://localhost:6333` — not `http`. From there, isolating `api_key=None` vs. `api_key=""` with otherwise identical calls reproduced the exact flip in one line.
+
+### The fix
+
+`os.getenv("QDRANT_URL") or None` / `os.getenv("QDRANT_API_KEY") or None`, applied at all four places `QdrantClient`/`QdrantVectorStore` are constructed from these two env vars (`context/indexers/semantic_qdrant.py`, `context/indexers/hybrid_qdrant.py`, `context/retrievers/semantic_qdrant.py`, `context/retrievers/hybrid_qdrant.py`) — every one of them had the identical bare-`os.getenv()` pattern, so every one needed the identical fix. Verified by re-running the actual `get_indexer()(repo_path)` call end to end against a real Qdrant instance afterward — 185 chunks indexed successfully, no SSL error.
+
+### Why this is worth a dedicated entry, not just a one-line changelog note
+
+The mechanism here is genuinely non-obvious: `"" or None` is a familiar Python idiom, but knowing *when* you need it requires knowing that a specific third-party library's constructor treats "empty string" and "not provided" as meaningfully different states — and that difference silently changes which network protocol gets used, producing an error message (`SSL: WRONG_VERSION_NUMBER`) that gives no hint about API keys, `None`, or empty strings at all. This is the kind of bug that's expensive to debug from the error message alone and cheap to prevent once you know the shape of it — exactly the kind of thing worth writing down for anyone (including a future instance of whoever's doing this port) who hits a Qdrant SSL error against a local instance again.
+
+### Interview questions
+
+1. Why does `os.getenv("QDRANT_API_KEY")` return `""` instead of `None` when `.env` has a blank `QDRANT_API_KEY=` line, and why does that distinction matter here specifically?
+2. What Python idiom fixes this, and why does it work (`"" or None` vs. `"" if "" else None` vs. `"" is not None`)?
+3. Why did comparing `rest_uri` across an `api_key=None` call and an `api_key=""` call — with everything else identical — pin down the root cause faster than reasoning about the SSL error itself?
+4. Why did ruling out a leftover shell-exported env var matter before looking anywhere else?
+5. This fix touches four files with the identical change. Why wasn't a shared helper function introduced instead of four inline fixes?
+6. What would the symptom have looked like instead if `QDRANT_URL` (not `QDRANT_API_KEY`) had been the blank one?
+7. Why does `curl http://localhost:6333/healthz` succeeding prove the *server* wasn't the problem, even while the Python client was failing?
+8. If `.env.example` instead didn't include `QDRANT_API_KEY=` as a line at all (left it out entirely rather than blank), would this bug still exist? Why or why not?
+9. What's the general lesson here about library constructors that infer behavior from "was an optional argument given" — where else in this codebase might the same class of bug be hiding?
+10. Why does this bug specifically only affect people following the README's own recommended local-Qdrant setup, rather than everyone who runs the CLI?
+
+---
+
 ## Bug fix — MCP tools reconnecting (and respawning subprocesses) on every single call
 
 **Branch:** `perf-mcp-persistent-sessions` (off `main`)
