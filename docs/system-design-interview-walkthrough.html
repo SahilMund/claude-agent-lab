@@ -1,0 +1,1103 @@
+<title>Claude Agent Lab</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root{
+    --bg:#f3f0e8; --surface:#ffffff; --surface-2:#eae5d8; --surface-3:#dfd8c6;
+    --ink:#1d1a15; --ink-dim:#6d6455; --ink-faint:#948b78;
+    --line:rgba(29,26,21,.14); --line-strong:rgba(29,26,21,.28);
+    --accent:#a15a12; --accent-soft:#a15a1216; --accent-ink:#fff8ee;
+    --accent-2:#2c7a67; --accent-2-soft:#2c7a6716;
+    --danger:#a8402c; --danger-soft:#a8402c14;
+    --code-bg:#eae4d3; --code-ink:#5a3a12;
+    --shadow:0 1px 2px rgba(29,26,21,.06), 0 8px 24px rgba(29,26,21,.05);
+    --serif:'IBM Plex Serif', Georgia, serif;
+    --sans:'IBM Plex Sans', -apple-system, system-ui, sans-serif;
+    --mono:'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#14171b; --surface:#1a1e23; --surface-2:#20252b; --surface-3:#2a3037;
+      --ink:#e9e5d9; --ink-dim:#a19a89; --ink-faint:#726b5c;
+      --line:rgba(233,229,217,.12); --line-strong:rgba(233,229,217,.24);
+      --accent:#e2a248; --accent-soft:#e2a24822; --accent-ink:#191307;
+      --accent-2:#6cc4ac; --accent-2-soft:#6cc4ac1e;
+      --danger:#e2725e; --danger-soft:#e2725e1c;
+      --code-bg:#10141a; --code-ink:#e2b169;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#14171b; --surface:#1a1e23; --surface-2:#20252b; --surface-3:#2a3037;
+    --ink:#e9e5d9; --ink-dim:#a19a89; --ink-faint:#726b5c;
+    --line:rgba(233,229,217,.12); --line-strong:rgba(233,229,217,.24);
+    --accent:#e2a248; --accent-soft:#e2a24822; --accent-ink:#191307;
+    --accent-2:#6cc4ac; --accent-2-soft:#6cc4ac1e;
+    --danger:#e2725e; --danger-soft:#e2725e1c;
+    --code-bg:#10141a; --code-ink:#e2b169;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.35);
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background:var(--bg); color:var(--ink); font-family:var(--sans);
+    font-size:15.5px; line-height:1.6; margin:0;
+  }
+  h1,h2,h3,h4{font-family:var(--serif); text-wrap:balance; color:var(--ink); margin:0;}
+  code, .mono{font-family:var(--mono);}
+  a{color:var(--accent);}
+  ::selection{background:var(--accent-soft);}
+
+  .shell{display:grid; grid-template-columns:272px minmax(0,1fr); max-width:1320px; margin:0 auto;}
+  @media (max-width:920px){ .shell{grid-template-columns:1fr;} }
+
+  /* ---------- TOC rail ---------- */
+  nav.toc{
+    position:sticky; top:0; align-self:start; height:100vh; overflow-y:auto;
+    padding:26px 14px 40px 22px; border-right:1px solid var(--line);
+  }
+  @media (max-width:920px){ nav.toc{position:static; height:auto; border-right:none; border-bottom:1px solid var(--line);} }
+  .toc-brand{display:flex; align-items:baseline; gap:8px; margin-bottom:4px;}
+  .toc-brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent); flex:none; box-shadow:0 0 0 3px var(--accent-soft);}
+  .toc-brand b{font-family:var(--serif); font-size:17px; letter-spacing:.2px;}
+  .toc-sub{font-size:11.5px; color:var(--ink-faint); font-family:var(--mono); text-transform:uppercase; letter-spacing:.08em; margin:2px 0 20px;}
+  .toc-clock{display:flex; align-items:center; justify-content:space-between; font-family:var(--mono); font-size:11px; color:var(--ink-dim); background:var(--surface-2); border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-bottom:18px;}
+  .toc-clock b{color:var(--accent); font-weight:600;}
+  ol.toc-list{list-style:none; margin:0; padding:0; counter-reset:sec;}
+  ol.toc-list li{counter-increment:sec; margin-bottom:1px;}
+  ol.toc-list a{
+    display:flex; gap:9px; align-items:baseline; text-decoration:none; color:var(--ink-dim);
+    padding:6px 8px 6px 6px; border-radius:7px; font-size:13px; border-left:2px solid transparent;
+  }
+  ol.toc-list a::before{
+    content:counter(sec,decimal-leading-zero); font-family:var(--mono); font-size:11px; color:var(--ink-faint);
+    flex:none; padding-top:1px;
+  }
+  ol.toc-list a:hover{background:var(--surface-2); color:var(--ink);}
+  ol.toc-list a.active{background:var(--accent-soft); color:var(--ink); border-left-color:var(--accent); font-weight:500;}
+  ol.toc-list a.active::before{color:var(--accent);}
+  .toc-tag{font-family:var(--mono); font-size:9.5px; color:var(--ink-faint); margin-left:auto; padding-top:2px; white-space:nowrap;}
+
+  /* ---------- main content ---------- */
+  main{padding:40px 48px 120px; min-width:0;}
+  @media (max-width:920px){ main{padding:28px 20px 90px;} }
+
+  .hero{border-bottom:1px solid var(--line); padding-bottom:26px; margin-bottom:34px;}
+  .hero .kicker{font-family:var(--mono); font-size:11.5px; text-transform:uppercase; letter-spacing:.1em; color:var(--accent); margin-bottom:10px;}
+  .hero h1{font-size:34px; font-weight:600; line-height:1.15;}
+  .hero h1 em{font-style:italic; color:var(--accent);}
+  .hero p.lede{font-size:16px; color:var(--ink-dim); max-width:66ch; margin-top:12px;}
+  .hero-meta{display:flex; gap:22px; flex-wrap:wrap; margin-top:20px; font-family:var(--mono); font-size:12px; color:var(--ink-dim);}
+  .hero-meta b{color:var(--ink); font-weight:600;}
+
+  section.sec{padding:44px 0; border-bottom:1px solid var(--line); scroll-margin-top:20px;}
+  section.sec:last-of-type{border-bottom:none;}
+  .sec-head{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; margin-bottom:6px;}
+  .sec-num{font-family:var(--mono); font-size:13px; color:var(--accent); font-weight:600;}
+  .sec-head h2{font-size:24px; font-weight:600;}
+  .sec-time{margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--ink-faint); background:var(--surface-2); border:1px solid var(--line); border-radius:20px; padding:3px 10px; white-space:nowrap;}
+  .sec-dek{color:var(--ink-dim); font-size:14.5px; max-width:70ch; margin:6px 0 22px;}
+
+  h3.sub{font-size:16px; font-weight:600; margin:26px 0 10px; display:flex; align-items:center; gap:8px;}
+  h3.sub .chip{font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--accent); background:var(--accent-soft); border-radius:5px; padding:2px 7px;}
+  h4.micro{font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-faint); margin:18px 0 8px;}
+
+  p{margin:0 0 12px; max-width:74ch;}
+  ul.pt, ol.pt{margin:0 0 14px; padding-left:1.3em;}
+  ul.pt li, ol.pt li{margin-bottom:7px; padding-left:2px; max-width:72ch;}
+  ul.pt.tight li, ol.pt.tight li{margin-bottom:4px;}
+  ul.nomarker{list-style:none; padding-left:0;}
+
+  .callout{display:flex; gap:12px; background:var(--surface); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:8px; padding:13px 16px; margin:16px 0; box-shadow:var(--shadow);}
+  .callout.warn{border-left-color:var(--danger);}
+  .callout.good{border-left-color:var(--accent-2);}
+  .callout .icon{font-family:var(--mono); font-size:11px; font-weight:600; letter-spacing:.05em; color:var(--accent); flex:none; padding-top:2px; text-transform:uppercase;}
+  .callout.warn .icon{color:var(--danger);}
+  .callout.good .icon{color:var(--accent-2);}
+  .callout p, .callout ul{margin:0;}
+  .callout ul{padding-left:1.1em;}
+
+  code.inline{background:var(--code-bg); color:var(--code-ink); padding:1.5px 5px; border-radius:4px; font-size:.87em;}
+
+  table{width:100%; border-collapse:collapse; margin:14px 0 20px; font-size:13.6px;}
+  th,td{text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top;}
+  thead th{font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-faint); border-bottom:1px solid var(--line-strong); font-weight:600;}
+  tbody tr:hover{background:var(--surface-2);}
+  td.mono, th.mono{font-family:var(--mono); font-size:12.6px;}
+  .tbl-wrap{overflow-x:auto; border-radius:10px;}
+  .col-good{color:var(--accent-2);}
+  .col-bad{color:var(--danger);}
+
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+  .grid3{display:grid; grid-template-columns:repeat(3,1fr); gap:14px;}
+  @media (max-width:760px){ .grid2,.grid3{grid-template-columns:1fr;} }
+
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:16px 18px; box-shadow:var(--shadow);}
+  .card h4{font-family:var(--sans); font-weight:600; font-size:13.5px; margin-bottom:8px; display:flex; align-items:center; gap:8px;}
+  .card h4 .dot{width:7px;height:7px;border-radius:50%; flex:none;}
+  .card p, .card ul{margin:0;}
+  .card ul{padding-left:1.05em; font-size:13.4px;}
+  .card ul li{margin-bottom:5px;}
+
+  .storewrap .tbl-wrap table td:first-child{font-weight:600;}
+
+  details.deep{background:var(--surface); border:1px solid var(--line); border-radius:10px; margin:14px 0; overflow:hidden;}
+  details.deep summary{cursor:pointer; list-style:none; padding:12px 16px; font-family:var(--mono); font-size:12.5px; color:var(--ink-dim); display:flex; align-items:center; gap:8px; user-select:none;}
+  details.deep summary::-webkit-details-marker{display:none;}
+  details.deep summary::before{content:"▸"; color:var(--accent); font-family:var(--sans); transition:transform .15s;}
+  details.deep[open] summary::before{transform:rotate(90deg);}
+  details.deep summary b{color:var(--ink); font-family:var(--sans); font-weight:600; font-size:13.5px;}
+  details.deep .deep-body{padding:2px 18px 16px; border-top:1px solid var(--line);}
+
+  .diagram-wrap{position:relative; margin:16px 0;}
+  .diagram-wrap pre.mermaid{margin:0; cursor:zoom-in; transition:box-shadow .15s;}
+  .diagram-wrap:hover pre.mermaid{box-shadow:var(--shadow), 0 0 0 2px var(--accent-soft);}
+  pre.mermaid{background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:18px; overflow-x:auto; box-shadow:var(--shadow);}
+  .expand-btn{
+    position:absolute; top:10px; right:10px; z-index:2;
+    display:flex; align-items:center; gap:6px; cursor:pointer;
+    background:var(--surface); border:1px solid var(--line); border-radius:7px;
+    padding:5px 10px; font-family:var(--mono); font-size:10.5px; color:var(--ink-dim);
+    text-transform:uppercase; letter-spacing:.06em; box-shadow:var(--shadow);
+    opacity:0; transition:opacity .12s;
+  }
+  .diagram-wrap:hover .expand-btn, .expand-btn:focus-visible{opacity:1;}
+  .expand-btn:hover{color:var(--accent); border-color:var(--accent);}
+
+  /* Expanded state blows up the ACTUAL rendered diagram in place via CSS —
+     never clones or moves the SVG node, so nothing about mermaid's internal
+     ids/markers/defs can break. */
+  #diagBackdrop{
+    position:fixed; inset:0; z-index:98; display:none;
+    background:color-mix(in srgb, var(--bg) 80%, transparent);
+    backdrop-filter:blur(3px);
+  }
+  #diagBackdrop.open{display:block;}
+
+  .diagram-wrap.diag-active{
+    position:fixed; inset:26px; z-index:99;
+    background:var(--surface); border:1px solid var(--line-strong); border-radius:14px;
+    box-shadow:0 20px 60px rgba(0,0,0,.4);
+    display:flex; flex-direction:column; margin:0;
+  }
+  .diag-toolbar{
+    display:none; align-items:center; gap:8px; padding:10px 14px;
+    border-bottom:1px solid var(--line); flex:none;
+  }
+  .diagram-wrap.diag-active .diag-toolbar{display:flex;}
+  .diagram-wrap.diag-active .expand-btn{display:none;}
+  .diag-toolbar .diag-title{font-family:var(--mono); font-size:11.5px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.06em;}
+  .diag-toolbar .spacer{flex:1;}
+  .diag-toolbar button{
+    font-family:var(--mono); font-size:14px; background:var(--surface-2); color:var(--ink);
+    border:1px solid var(--line); border-radius:7px; width:28px; height:28px; cursor:pointer; line-height:1;
+  }
+  .diag-toolbar button:hover{border-color:var(--accent); color:var(--accent);}
+  .diag-toolbar button.close-btn{width:auto; padding:0 12px; font-family:var(--sans); font-weight:500; font-size:12.5px;}
+
+  .diagram-wrap.diag-active pre.mermaid{
+    flex:1; margin:0; border:none; box-shadow:none; border-radius:0;
+    overflow:auto; cursor:default; display:flex; justify-content:center; padding:26px;
+  }
+  .diagram-wrap.diag-active pre.mermaid > svg{
+    transform:scale(var(--diag-zoom, 1.5)); transform-origin:top center;
+    height:auto !important; flex:none;
+  }
+  body.diag-open{overflow:hidden;}
+
+  .flow-list{counter-reset:fl; list-style:none; padding:0; margin:0 0 16px;}
+  .flow-list li{counter-increment:fl; position:relative; padding:2px 0 16px 34px; border-left:2px solid var(--line); margin-left:12px;}
+  .flow-list li:last-child{border-left-color:transparent; padding-bottom:0;}
+  .flow-list li::before{content:counter(fl); position:absolute; left:-13px; top:0; width:24px; height:24px; border-radius:50%; background:var(--surface); border:2px solid var(--accent); color:var(--accent); font-family:var(--mono); font-size:11px; font-weight:600; display:flex; align-items:center; justify-content:center;}
+  .flow-list b{display:block; font-size:13.8px; margin-bottom:2px;}
+  .flow-list span.where{font-family:var(--mono); font-size:11.5px; color:var(--ink-faint);}
+
+  .term{display:grid; grid-template-columns:150px 1fr; gap:4px 16px; padding:9px 0; border-bottom:1px solid var(--line); font-size:13.4px;}
+  .term dt{font-family:var(--mono); font-weight:600; color:var(--accent);}
+  .term dd{margin:0; color:var(--ink-dim);}
+
+  .closer{background:linear-gradient(155deg, var(--surface-2), var(--surface)); border:1px solid var(--line); border-radius:14px; padding:26px 28px; margin-top:6px;}
+  .closer h3{font-size:19px; margin-bottom:10px;}
+
+  footer.doc-foot{padding:30px 0 10px; color:var(--ink-faint); font-size:12px; font-family:var(--mono);}
+
+  ::-webkit-scrollbar{width:10px; height:10px;}
+  ::-webkit-scrollbar-thumb{background:var(--line-strong); border-radius:6px;}
+  @media (prefers-reduced-motion: reduce){ *{transition:none !important;} }
+</style>
+
+<div class="shell">
+  <nav class="toc" id="tocNav">
+    <div class="toc-brand"><span class="dot"></span><b>claude_agent_lab</b></div>
+    <div class="toc-sub">System-design walkthrough</div>
+    <div class="toc-clock">Interview budget <b>~42 min</b></div>
+    <ol class="toc-list">
+      <li><a href="#s0">Framing <span class="toc-tag">0:00</span></a></li>
+      <li><a href="#s1">Requirements <span class="toc-tag">0:02</span></a></li>
+      <li><a href="#s-usecase">Worked use case <span class="toc-tag">0:04</span></a></li>
+      <li><a href="#s2">Architecture <span class="toc-tag">0:07</span></a></li>
+      <li><a href="#s3">Folder layout <span class="toc-tag">0:09</span></a></li>
+      <li><a href="#s4">RAG vs. grep <span class="toc-tag">0:11</span></a></li>
+      <li><a href="#s5">Indexing &amp; freshness <span class="toc-tag">0:16</span></a></li>
+      <li><a href="#s6">Agent &amp; tools loop <span class="toc-tag">0:19</span></a></li>
+      <li><a href="#s7">STM vs. LTM <span class="toc-tag">0:22</span></a></li>
+      <li><a href="#s8">Caching <span class="toc-tag">0:25</span></a></li>
+      <li><a href="#s9">Tools vs. MCP <span class="toc-tag">0:27</span></a></li>
+      <li><a href="#s10">Skills <span class="toc-tag">0:29</span></a></li>
+      <li><a href="#s11">Long-running tasks <span class="toc-tag">0:31</span></a></li>
+      <li><a href="#s-patterns">Named agent patterns <span class="toc-tag">0:33</span></a></li>
+      <li><a href="#s-lld">LLD &amp; best practices <span class="toc-tag">0:35</span></a></li>
+      <li><a href="#s12">Observability <span class="toc-tag">0:37</span></a></li>
+      <li><a href="#s13">End-to-end &amp; storage map <span class="toc-tag">0:38</span></a></li>
+      <li><a href="#s-scale">Scaling, cost &amp; evals <span class="toc-tag">0:39</span></a></li>
+      <li><a href="#s-deploy">Deployment <span class="toc-tag">0:40</span></a></li>
+      <li><a href="#s14">Tradeoffs / closing <span class="toc-tag">0:41</span></a></li>
+      <li><a href="#s15">Glossary</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <div class="kicker">Interview walkthrough &middot; REPL / CLI only, dashboard out of scope</div>
+      <h1>How I'd explain <em>claude_agent_lab</em> in 35 minutes</h1>
+      <p class="lede">A script for narrating this project's system design end to end &mdash; requirements first, then architecture, then the decisions an interviewer will actually probe: RAG vs. grep, short-term vs. long-term memory, caching, MCP vs. plain tools, and why a task queue exists at all.</p>
+      <div class="hero-meta">
+        <span>Subject: <b>RAG-powered agentic CLI code assistant</b></span>
+        <span>Scope: <b>REPL only</b> (no dashboard)</span>
+        <span>Style: <b>point-by-point</b>, diagrams inline</span>
+      </div>
+    </header>
+
+    <!-- 0 -->
+    <section class="sec" id="s0">
+      <div class="sec-head"><span class="sec-num">00</span><h2>How to run this in the room</h2><span class="sec-time">0:00&ndash;0:02</span></div>
+      <p class="sec-dek">Before the design itself &mdash; the shape of a good answer to "walk me through a project you built."</p>
+      <ol class="pt">
+        <li><b>Say the one-liner first.</b> "A local CLI that lets you ask natural-language questions about a codebase and get answers grounded in real code, plus an agent that can plan and execute multi-step engineering tasks against that same codebase." Everything else is detail on that sentence.</li>
+        <li><b>State the two constraints that shape every later decision</b> before describing components: this runs on <em>one machine, for one user, at low cost</em>. A lot of "why didn't you do X" questions dissolve once these are on the table.</li>
+        <li><b>Draw the architecture diagram early</b> (Section 2) &mdash; it's the map you keep pointing back to for the rest of the conversation.</li>
+        <li><b>Volunteer the known gaps yourself</b> (Section 14) rather than waiting to be caught. It reads as more senior than a spotless story.</li>
+      </ol>
+    </section>
+
+    <!-- 1 -->
+    <section class="sec" id="s1">
+      <div class="sec-head"><span class="sec-num">01</span><h2>Requirements</h2><span class="sec-time">0:02&ndash;0:05</span></div>
+      <p class="sec-dek">Functional requirements say what the system must <em>do</em>. Non-functional requirements say what shape the doing has to take &mdash; and in this project, the non-functionals are what actually decided the architecture.</p>
+
+      <div class="grid2">
+        <div class="card">
+          <h4><span class="dot" style="background:var(--accent)"></span>Functional</h4>
+          <ul>
+            <li>Index a local, multi-language codebase into something searchable by meaning, not just text.</li>
+            <li>Answer natural-language questions grounded in real code, with file + line citations &mdash; never a bare hallucinated answer.</li>
+            <li>Hold a multi-turn conversation per session; resume a past one by ID.</li>
+            <li>Remember durable facts/preferences <em>across</em> sessions, not just within one.</li>
+            <li>Take a fuzzy multi-step goal, turn it into a plan, and execute it with a human approval gate.</li>
+            <li>Let the agent read/write files, run shell commands, and reach external services (GitHub) safely.</li>
+            <li>Keep the index fresh as the codebase changes &mdash; whether a human or the agent itself made the change.</li>
+            <li>Cache repeated or paraphrased questions to save cost and latency.</li>
+            <li>Swap the underlying LLM or embedding provider with a config edit, not a code change.</li>
+            <li>Package specialised "how-to" playbooks (skills) the agent loads only when relevant.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h4><span class="dot" style="background:var(--accent-2)"></span>Non-functional</h4>
+          <ul>
+            <li><b>Local-first, single-user.</b> No auth, no multi-tenancy &mdash; an explicit scope cut, not an oversight.</li>
+            <li><b>Cost-bounded.</b> Local embeddings by default; the task executor runs <em>serially</em> (one task at a time) on purpose &mdash; determinism and cost control over throughput.</li>
+            <li><b>Resilient to dependency failure.</b> Redis down, an MCP subprocess hiccup, or a mid-task crash must degrade or recover &mdash; never take down the REPL.</li>
+            <li><b>Interactive latency for <code class="inline">/ask</code>.</b> Bounded retrieval (top-k), reused MCP sessions, cache-first lookups.</li>
+            <li><b>Extensible by config or file drop</b>, not by forking code &mdash; new LLM provider, new skill, new MCP server.</li>
+            <li><b>Auditable state.</b> Every task transition is one atomic SQLite write, so a crash never leaves ambiguous state.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout">
+        <span class="icon">Say this</span>
+        <p>"Almost every interesting decision below is downstream of two things: it's single-user/local, and it has to stay cheap. Parallel task execution, a hosted vector DB, multi-tenant auth &mdash; all rejected or deferred because the non-functionals didn't call for them, not because they're hard."</p>
+      </div>
+    </section>
+
+    <!-- use case -->
+    <section class="sec" id="s-usecase">
+      <div class="sec-head"><span class="sec-num">02</span><h2>A worked use case</h2><span class="sec-time">0:04&ndash;0:07</span></div>
+      <p class="sec-dek">Requirements are abstract until they're pinned to one concrete scenario. This is the scenario to actually narrate &mdash; it's what every later section is explaining the machinery <em>for</em>.</p>
+
+      <h4 class="micro">Clarifying questions worth asking out loud first</h4>
+      <ul class="pt tight">
+        <li>CLI for one developer, or something a team shares? <span class="mono" style="color:var(--ink-faint)">&rarr; this project: single developer, single machine.</span></li>
+        <li>Typical repo size &mdash; hundreds of files, or a monorepo? <span class="mono" style="color:var(--ink-faint)">&rarr; small-to-medium; the chunking/indexing choices in Section 6 assume this.</span></li>
+        <li>Risk tolerance for autonomous multi-file edits? <span class="mono" style="color:var(--ink-faint)">&rarr; low enough to require human approval before any <code class="inline">/plan</code> executes.</span></li>
+      </ul>
+
+      <h4 class="micro">The scenario</h4>
+      <p style="max-width:74ch">A developer opens a repository they didn't write. They want to (a) understand a subsystem before touching it, and (b) have the agent implement one small, well-scoped feature once they understand enough to trust it.</p>
+
+      <ol class="flow-list">
+        <li><b>Orientation, via <code class="inline">/ask</code></b> &mdash; "how does the config system work?" Hits Section 7's loop: cache check, <code class="inline">search_codebase</code>, a grounded answer with file/line citations. Zero risk &mdash; read-only.<span class="where">Sections 5, 7</span></li>
+        <li><b>A follow-up in the same breath</b> &mdash; "and how would I add a new field to it?" STM (Section 8) means this resolves the pronoun "it" correctly without re-stating context.<span class="where">Section 8</span></li>
+        <li><b>A stated preference</b> &mdash; "when you generate code, prefer early returns." The agent calls <code class="inline">remember</code> &mdash; not because this turn needs it, but because every future session should know it.<span class="where">Section 8, LTM</span></li>
+        <li><b>Committing to the change, via <code class="inline">/plan</code></b> &mdash; "add a <code class="inline">timeout_seconds</code> field to the config, threaded through the retriever." Decomposed into a small DAG, presented for approval before anything is written.<span class="where">Section 12</span></li>
+        <li><b>Execution, one task at a time</b> &mdash; each task gets only the tools its type needs; the earlier <code class="inline">remember</code>'d style preference is available to every sub-agent via <code class="inline">recall</code>, not just the original session.<span class="where">Sections 8, 10, 12</span></li>
+        <li><b>Verification, not trust</b> &mdash; each task's output is judged against its own acceptance criteria before being marked done.<span class="where">Section 12</span></li>
+        <li><b>Immediate re-grounding</b> &mdash; the moment the plan finishes, a reindex runs so a follow-up <code class="inline">/ask</code> about the new field is answered from the real, current code, not stale context.<span class="where">Section 6</span></li>
+      </ol>
+
+      <div class="callout"><span class="icon">Common follow-up</span>
+        <p>"How do you stop this from making unbounded tool calls and running up cost?" &mdash; concretely, in this project: a 30-second timeout on every shell command, <code class="inline">max_retries=3</code> per task, strictly serial task execution (one LLM agent running at a time, not N in parallel), and a judge gate that fails fast on a bad output rather than letting the orchestrator loop indefinitely re-trying a fundamentally wrong approach.</p>
+      </div>
+    </section>
+
+    <!-- 2 -->
+    <section class="sec" id="s2">
+      <div class="sec-head"><span class="sec-num">03</span><h2>High-level architecture</h2><span class="sec-time">0:05&ndash;0:08</span></div>
+      <p class="sec-dek">One REPL process, one config file, and six subsystems it leans on. Nothing here is a microservice &mdash; it's one Python process talking to a handful of local/self-hosted stores.</p>
+
+      <pre class="mermaid">
+flowchart TB
+    U["User @ terminal"] -->|"/ask, /plan, /reindex ..."| REPL["main.py — REPL loop"]
+
+    REPL --> CFG["config.py / config.yaml\n(one dict, loaded once)"]
+    REPL --> IDX["Indexing pipeline\ntree-sitter chunker → embedder → vector store"]
+    REPL --> AGT["Agent\nLangGraph create_agent + tool list"]
+    REPL --> CACHE["Semantic cache\nRedis + RediSearch"]
+    REPL --> WATCH["Filesystem watcher\ndebounced reindex"]
+    REPL --> TASKS["Task engine\nplanner → orchestrator → judge"]
+
+    AGT --> STM["Short-term memory\nLangGraph SQLite checkpointer"]
+    AGT --> LTM["Long-term memory\nQdrant: claude_agent_lab_memory"]
+    AGT --> TOOLS["In-process tools\nfilesystem + terminal"]
+    AGT --> MCP["MCP client\nGitHub + filesystem servers"]
+    AGT -->|"search_codebase"| IDX
+
+    IDX --> VDB[("Vector store\nQdrant (hybrid) or Chroma")]
+    CACHE --> REDIS[("Redis + RediSearch\nHNSW / cosine")]
+    TASKS --> TDB[("SQLite: tasks.db\nWAL mode")]
+    STM --> MDB[("SQLite: memory.db")]
+
+    style U fill:#00000000,stroke:#a15a12,stroke-width:1.5px
+    style REPL fill:#a15a1218,stroke:#a15a12,stroke-width:1.5px
+      </pre>
+
+      <ul class="pt tight">
+        <li>Everything routes through <code class="inline">main.py</code>'s command loop &mdash; there's no separate server process for the REPL (the FastAPI dashboard in <code class="inline">api/</code> is a second front end over the same functions, out of scope for this walkthrough).</li>
+        <li><code class="inline">config.yaml</code> is read once at import time into a plain dict (<code class="inline">config.py</code>) &mdash; every module imports that same dict rather than re-reading the file, so provider/mode switches are consistent for the whole process lifetime.</li>
+        <li>Three independent datastores, each doing one job: <b>Qdrant</b> (code meaning + long-term facts), <b>Redis</b> (answer cache), <b>SQLite</b> (conversation history + task state) &mdash; all local, all optional to varying degrees except Qdrant.</li>
+      </ul>
+    </section>
+
+    <!-- 3 -->
+    <section class="sec" id="s3">
+      <div class="sec-head"><span class="sec-num">04</span><h2>Folder layout</h2><span class="sec-time">0:08&ndash;0:10</span></div>
+      <p class="sec-dek">The package mirrors the architecture diagram almost 1:1 &mdash; each top-level directory is one subsystem, not a generic "utils"/"helpers" grab bag.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Directory</th><th>Owns</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">agent/</td><td>Builds the LangGraph agent (<code class="inline">factory.py</code>), the query entry point incl. cache check (<code class="inline">orchestrator.py</code>), and the agent-callable tool functions (<code class="inline">tools.py</code>)</td></tr>
+          <tr><td class="mono">context/indexers/</td><td>tree-sitter chunking (<code class="inline">code_parser.py</code>), Chroma/Qdrant/hybrid indexers, the filesystem <code class="inline">watcher.py</code></td></tr>
+          <tr><td class="mono">context/retrievers/</td><td>The read-side counterpart &mdash; semantic or hybrid similarity search over whichever store <code class="inline">config.yaml</code> selects</td></tr>
+          <tr><td class="mono">llm/</td><td>Provider-agnostic LLM + embedder factory (<code class="inline">factory.py</code>) &mdash; the one place that knows about Anthropic/OpenAI/Gemini/Groq/Ollama</td></tr>
+          <tr><td class="mono">memory/</td><td><code class="inline">session.py</code> (which thread is active), <code class="inline">short_term.py</code> (checkpointer + summarization), <code class="inline">long_term.py</code> (cross-session facts)</td></tr>
+          <tr><td class="mono">cache/</td><td>Redis-backed semantic cache for <code class="inline">/ask</code> answers</td></tr>
+          <tr><td class="mono">mcp/</td><td>Connects to external MCP servers declared in <code class="inline">mcp_servers.json</code></td></tr>
+          <tr><td class="mono">tools/</td><td>In-process filesystem + terminal tools &mdash; no subprocess-per-call cost</td></tr>
+          <tr><td class="mono">skills/</td><td>Loads <code class="inline">SKILL.md</code> playbooks from disk, exposes them as a progressive-disclosure tool</td></tr>
+          <tr><td class="mono">tasks/</td><td>The <code class="inline">/plan</code> engine: planner, DAG orchestrator, per-task executor + judge, approval gate, crash recovery, SQLite store</td></tr>
+          <tr><td class="mono">observability/</td><td>One structured logger config shared by every module above</td></tr>
+        </tbody>
+      </table></div>
+      <div class="callout good"><span class="icon">Interview tell</span><p>Being able to point at a question ("where's caching handled?") and land on exactly one directory, every time, is itself a design signal &mdash; it means responsibilities weren't allowed to smear across files.</p></div>
+    </section>
+
+    <!-- 4 -->
+    <section class="sec" id="s4">
+      <div class="sec-head"><span class="sec-num">05</span><h2>The core bet: RAG vs. grep</h2><span class="sec-time">0:10&ndash;0:15</span></div>
+      <p class="sec-dek">The single decision every other subsystem in this project hangs off: how does the agent find the code relevant to a question? There are two real answers, and most production coding agents you've used pick differently than this project does &mdash; worth addressing head-on.</p>
+
+      <h3 class="sub"><span class="chip">Option A</span>Lexical / agentic search (grep-style)</h3>
+      <ul class="pt tight">
+        <li>No pre-processing at all &mdash; the agent is handed a <code class="inline">grep</code>/<code class="inline">glob</code>/<code class="inline">read_file</code> tool set and searches the live filesystem itself, iteratively, choosing its own search terms.</li>
+        <li>Always 100% fresh &mdash; there is no index to go stale, because there is no index.</li>
+        <li>As publicly described, this is the core approach <b>Claude Code</b> (Anthropic's own CLI) takes: it doesn't build a persistent embedding index of your repo by default &mdash; it leans on the model's own iterative tool-use (grep/glob/read) plus a large context window.</li>
+      </ul>
+
+      <h3 class="sub"><span class="chip">Option B</span>Retrieval-augmented generation (what this project does)</h3>
+      <ul class="pt tight">
+        <li>Pre-process once: chunk the codebase into meaningful units (function/class/block), embed each chunk, store in a vector index.</li>
+        <li>At query time: embed the question, do one similarity search, hand the top-k chunks to the LLM as grounding &mdash; one retrieval step instead of many tool round-trips.</li>
+        <li>As publicly described, <b>Cursor</b> AST-chunks code and embeds it into a dedicated vector search engine, retrieved via semantic similarity. <b>GitHub Copilot</b> historically leaned on local context (current file + "neighboring tabs" similarity) for inline completions, with a pre-built semantic index added for chat/workspace-aware features.</li>
+      </ul>
+
+      <div class="tbl-wrap"><table>
+        <thead><tr><th></th><th>Claude Code</th><th>Cursor</th><th>GitHub Copilot</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">Mechanism</td><td>Real-time agentic exploration &mdash; <code class="inline">grep</code>/<code class="inline">glob</code>, no pre-built index at all</td><td>RAG &mdash; AST-chunked, embedded, stored in a vector search engine</td><td>Pre-built semantic index + local "neighboring tabs" context</td></tr>
+          <tr><td class="mono">Freshness</td><td>Always current &mdash; reads live files</td><td>Can lag &mdash; index must stay in sync</td><td>Same lag risk as Cursor</td></tr>
+          <tr><td class="mono">Exact-match precision</td><td>Excellent &mdash; regex/text matching is native</td><td>Weaker &mdash; near-identical embeddings can confuse e.g. <code class="inline">updateUser()</code> vs <code class="inline">deleteUser()</code></td><td>Same weakness as Cursor</td></tr>
+          <tr><td class="mono">Design bet</td><td>The model itself, given the right tools, is the real constraint</td><td>Investing in retrieval infra gets better context to the model faster</td><td>Speed of surfacing context matters more than perfect precision</td></tr>
+        </tbody>
+      </table></div>
+      <p style="font-size:12.5px; color:var(--ink-faint); max-width:70ch;">As publicly described by each team / product documentation as of 2026 &mdash; not derived from access to any of these codebases. Worth stating plainly in an interview: this is a genuine, defensible fork, not a "one is right" situation &mdash; a rapidly-changing monorepo with many concurrent editors favours the agentic bet; a large but relatively stable codebase where per-query latency is the priority favours the index-based one.</p>
+
+      <div class="tbl-wrap"><table>
+        <thead><tr><th></th><th>Grep / agentic search</th><th>RAG (this project)</th></tr></thead>
+        <tbody>
+          <tr><td><b>Pros</b></td>
+            <td><span class="col-good">✓</span> zero index/embedding cost<br><span class="col-good">✓</span> always reads live files &mdash; no freshness problem<br><span class="col-good">✓</span> scales to repos too big/volatile to economically index<br><span class="col-good">✓</span> no vector-DB dependency</td>
+            <td><span class="col-good">✓</span> finds semantic matches despite different wording<br><span class="col-good">✓</span> one retrieval round-trip, not many<br><span class="col-good">✓</span> ranked by relevance, not just text match<br><span class="col-good">✓</span> hybrid mode also catches exact identifiers (BM25 sparse + dense)</td></tr>
+          <tr><td><b>Cons</b></td>
+            <td><span class="col-bad">✗</span> purely lexical &mdash; misses concept matches unless the model guesses the right term<br><span class="col-bad">✗</span> multiple iterative LLM round-trips per question &mdash; slower, more tokens<br><span class="col-bad">✗</span> quality depends on the model's search-term guessing</td>
+            <td><span class="col-bad">✗</span> needs a real pipeline: chunking strategy, embedding cost, a vector DB to run<br><span class="col-bad">✗</span> freshness lag between reindex triggers (see Section 5 &mdash; a real, current gap here)<br><span class="col-bad">✗</span> embedding-model choice affects recall quality</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout"><span class="icon">Why RAG here</span>
+        <ul>
+          <li>This is explicitly a systems-design <em>learning</em> project &mdash; the point is to build and understand the chunking → embedding → hybrid-retrieval pipeline itself. That subsystem doesn't exist to learn from under a grep-only design.</li>
+          <li>Tree-sitter chunking returns whole, AST-defined units (a full function or class, not an arbitrary line window) with clean metadata &mdash; nicer grounding for citations than an arbitrary grep match window.</li>
+          <li>Hybrid mode (dense + BM25 sparse) means it isn't <em>purely</em> semantic either &mdash; exact identifier lookups still work, closing RAG's classic "can't find <code class="inline">getUserById</code> if it's phrased differently" gap.</li>
+        </ul>
+      </div>
+
+      <details class="deep">
+        <summary><b>If I had to switch this project to grep-only</b> &mdash; what actually changes</summary>
+        <div class="deep-body">
+          <ul class="pt tight">
+            <li>Delete <code class="inline">context/indexers/</code>, <code class="inline">context/retrievers/</code>, the Qdrant dependency, and the retrieval-embeddings config entirely.</li>
+            <li><code class="inline">search_codebase</code> becomes a <code class="inline">grep_codebase</code> tool wrapping <code class="inline">ripgrep</code> as a subprocess &mdash; structurally identical to the existing <code class="inline">run_command</code> tool, which can already do this informally today.</li>
+            <li>No indexing step at startup &rarr; faster cold start, and the entire "index freshness" problem in Section 5 disappears &mdash; there's nothing to go stale.</li>
+            <li>Embeddings don't disappear entirely &mdash; the semantic cache and long-term memory both still want them, just not for code retrieval anymore.</li>
+            <li>Net cost shifts from "build/maintain an index" to "more LLM round-trips per question" &mdash; more tokens and latency per <code class="inline">/ask</code>, less infrastructure to run.</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
+    <!-- 5 -->
+    <section class="sec" id="s5">
+      <div class="sec-head"><span class="sec-num">06</span><h2>Indexing &amp; keeping it fresh</h2><span class="sec-time">0:15&ndash;0:19</span></div>
+      <p class="sec-dek">Having chosen RAG, two problems follow immediately: how do you chunk code sensibly, and how do you stop the index from lying to you the moment a file changes?</p>
+
+      <h4 class="micro">Chunking</h4>
+      <ul class="pt tight">
+        <li>Code files (15 languages &mdash; Python, JS/TS/TSX, Java, Go, Rust, C/C++, C#, Ruby, PHP, Swift, Kotlin, Bash) are parsed with <b>tree-sitter</b>; the walk stops the moment it hits a function/class/method node, so nested functions aren't double-indexed as separate chunks.</li>
+        <li>Text/config files (<code class="inline">.md</code>, <code class="inline">.yaml</code>, <code class="inline">.json</code>, ...) have no meaningful AST &mdash; chunked with a 50-line sliding window, 10-line overlap, so context isn't lost at a boundary.</li>
+        <li>If AST parsing finds nothing in a code file (e.g. an imports-only file), it falls back to the same sliding window &mdash; every file produces at least one chunk.</li>
+        <li>Each chunk carries real metadata: file path, name, type, start/end line &mdash; what actually lets an answer cite <code class="inline">factory.py:19-32</code> instead of a vague paraphrase.</li>
+      </ul>
+
+      <h4 class="micro">Freshness &mdash; four separate triggers, not one</h4>
+      <pre class="mermaid">
+flowchart LR
+    A["App startup"] -->|"collection already has points?"| A2{Skip full reindex}
+    B["/reindex command"] --> IDXR["Full reindex"]
+    C["File watcher\n(watchdog, 1.5s debounce)"] -->|"per-file upsert/delete"| G{"vector_store.provider\n== qdrant?"}
+    G -->|"no (chroma)"| WORKS["Index updated ✓"]
+    G -->|"yes — this project's default"| BROKEN["Gap: hardcoded to Chroma's\nper-file functions — no-op"]
+    D["/plan finishes"] --> IDXR2["Explicit full reindex\n(provider-agnostic)"]
+
+    style BROKEN fill:#a8402c14,stroke:#a8402c,stroke-width:1.5px
+    style WORKS fill:#2c7a6716,stroke:#2c7a67,stroke-width:1.5px
+      </pre>
+      <ol class="pt">
+        <li><b>Startup</b> &mdash; <code class="inline">get_indexer()(repo_path)</code> checks whether the collection already has points; if so it loads the existing index instead of re-embedding everything on every launch.</li>
+        <li><b>Manual</b> &mdash; the user runs <code class="inline">/reindex</code> for a full, provider-agnostic rebuild.</li>
+        <li><b>The watcher, for human edits</b> &mdash; a <code class="inline">watchdog</code> observer (FSEvents on macOS, inotify on Linux, polling on Windows) fires on file create/modify/delete/move.</li>
+        <li><b>The explicit post-<code class="inline">/plan</code> reindex, for agent edits</b> &mdash; after every task-execution run finishes, <code class="inline">handle_plan_command</code> calls the indexer again directly, regardless of which vector store is configured.</li>
+      </ol>
+
+      <h4 class="micro">Why the watcher debounces, specifically</h4>
+      <ul class="pt tight">
+        <li><b>The problem:</b> a single "save" in most editors doesn't fire one filesystem event &mdash; it fires several (a write, a permissions/chmod touch, sometimes a rename-swap for atomic saves). Reacting to each one naively means re-embedding the same file 2&ndash;3 times per keystroke-adjacent save, for no benefit.</li>
+        <li><b>The mechanism:</b> every indexable file gets its own <code class="inline">threading.Timer</code>, armed for <b>1.5 seconds</b>. If another event for that <em>same file</em> arrives before the timer fires, the old timer is cancelled and a fresh 1.5s timer starts &mdash; so the actual reindex call only fires once the file has been quiet for a full 1.5s.</li>
+        <li><b>Why per-file, not one global timer:</b> editing two unrelated files back-to-back shouldn't make the second file's reindex wait on the first's debounce window &mdash; a shared timer would silently delay unrelated changes for no reason.</li>
+        <li><b>The actual payoff:</b> without this, a burst of saves (or a large git checkout touching many tracked files at once) could fire a storm of overlapping, redundant embedding calls &mdash; wasted embedding-API cost and CPU, and a real risk of two overlapping reindex jobs racing on the same file.</li>
+      </ul>
+
+      <div class="callout warn">
+        <span class="icon">Real, current gap</span>
+        <p>The watcher's on-change handler is hard-coded to Chroma's per-file update functions. With this project's actual default (<code class="inline">vector_store.provider: qdrant</code>, hybrid mode), a human editing a file <em>does not</em> reach the live index today &mdash; only <code class="inline">/reindex</code> or the post-<code class="inline">/plan</code> call does. Interesting asymmetry to volunteer: <b>the agent's own edits stay fresh automatically; a human's edits currently don't</b>, for the opposite of the reason you'd guess.</p>
+      </div>
+    </section>
+
+    <!-- 6 -->
+    <section class="sec" id="s6">
+      <div class="sec-head"><span class="sec-num">07</span><h2>Agent &amp; the tool-call loop</h2><span class="sec-time">0:19&ndash;0:22</span></div>
+      <p class="sec-dek">One <code class="inline">/ask</code>, end to end &mdash; the sequence every other section plugs into.</p>
+      <pre class="mermaid">
+sequenceDiagram
+    participant User
+    participant REPL as main.py
+    participant Orc as orchestrator.handle_query
+    participant Cache as Semantic cache (Redis)
+    participant Agent as LangGraph agent
+    participant LLM
+    participant RAG as search_codebase
+
+    User->>REPL: /ask "how does the config system work?"
+    REPL->>Orc: handle_query(agent, question, thread_id)
+    Orc->>Cache: get(question, domain, model)
+    alt cache hit (similarity ≥ 0.85)
+        Cache-->>Orc: cached answer
+        Orc-->>User: answer (no LLM call at all)
+    else cache miss
+        Orc->>Agent: ainvoke({messages:[question]}, thread_id)
+        Agent->>LLM: reasoning turn
+        LLM-->>Agent: tool call: search_codebase / recall / read_file / MCP tool
+        Agent->>RAG: run tool
+        RAG-->>Agent: ranked chunks with citations
+        Agent->>LLM: next turn, with tool results
+        LLM-->>Agent: final answer
+        Agent-->>Orc: last message content
+        Orc->>Cache: put(question, answer, ttl)
+        Orc-->>User: answer
+    end
+      </pre>
+      <ul class="pt tight">
+        <li><code class="inline">agent/factory.py</code> assembles one LangChain <code class="inline">create_agent</code> graph: provider-agnostic LLM, the tool list (<code class="inline">search_codebase</code>, <code class="inline">recall</code>, <code class="inline">remember</code>, <code class="inline">load_skill</code>, terminal tools, ~40 MCP tools), a system prompt, and the LangGraph checkpointer for memory.</li>
+        <li>The system prompt is a direct policy, not a suggestion: <em>"Always use the <code class="inline">search_codebase</code> tool before answering any question"</em> &mdash; grounding is enforced by instruction, not left to the model's discretion.</li>
+        <li>The cache check happens <em>before</em> the agent is touched at all &mdash; a hit means zero tool calls, zero LLM calls, zero retrieval.</li>
+      </ul>
+      <div class="callout"><span class="icon">Name it</span><p>That reasoning &harr; tool-call loop is the textbook <b>ReAct</b> pattern (Reason, Act, Observe, repeat) &mdash; and the <code class="inline">/ask</code> vs. <code class="inline">/plan</code> split one level up in <code class="inline">main.py</code> is <b>Routing</b>, just a deterministic command-prefix router rather than a learned/LLM classifier. Both get their full lineup of names in Section 13.</p></div>
+    </section>
+
+    <!-- 7 -->
+    <section class="sec" id="s7">
+      <div class="sec-head"><span class="sec-num">08</span><h2>Short-term vs. long-term memory</h2><span class="sec-time">0:22&ndash;0:25</span></div>
+      <p class="sec-dek">Two genuinely different problems that are easy to conflate: "remember this conversation" and "remember this fact forever."</p>
+
+      <div class="grid2">
+        <div class="card"><h4><span class="dot" style="background:var(--accent)"></span>Short-term (STM)</h4>
+          <ul>
+            <li><b>What:</b> the full message history of one conversation, keyed by <code class="inline">thread_id</code>.</li>
+            <li><b>Where:</b> LangGraph's <code class="inline">AsyncSqliteSaver</code> &rarr; <code class="inline">.agent_lab/memory/memory.db</code>. Which thread is "current" is a separate one-line text file, <code class="inline">.agent_lab/memory/current_session</code>.</li>
+            <li><b>Bounded automatically:</b> past 4,000 tokens, <code class="inline">SummarizationMiddleware</code> compresses older turns and keeps the last 20 messages verbatim &mdash; a long session never blows the context window.</li>
+            <li><b>Scope:</b> per-thread only. <code class="inline">/new_session</code> starts a fresh, empty thread; <code class="inline">/switch &lt;id&gt;</code> resumes an old one &mdash; nothing is deleted, just not currently active.</li>
+            <li><b>Used for:</b> "what did I just ask", multi-turn follow-ups &mdash; never crosses a session boundary on its own.</li>
+          </ul>
+        </div>
+        <div class="card"><h4><span class="dot" style="background:var(--accent-2)"></span>Long-term (LTM)</h4>
+          <ul>
+            <li><b>What:</b> durable facts/preferences, written and read explicitly via two agent tools &mdash; <code class="inline">remember(fact, category)</code> / <code class="inline">recall(query, k)</code>.</li>
+            <li><b>Where:</b> a <em>separate</em> Qdrant collection (<code class="inline">claude_agent_lab_memory</code>) from the code index &mdash; same embedder, different collection.</li>
+            <li><b>Scope:</b> global &mdash; not tied to <code class="inline">thread_id</code> at all. A fact saved in session 1 is retrievable in session 47.</li>
+            <li><b>Retrieval is explicit, not automatic:</b> the model decides to call <code class="inline">recall</code>; nothing is silently injected into every prompt.</li>
+            <li><b>Known gap:</b> no de-duplication, no expiry/forgetting &mdash; unlike the semantic cache's TTL, a contradicted fact just sits alongside the new one.</li>
+          </ul>
+        </div>
+      </div>
+
+      <pre class="mermaid">
+sequenceDiagram
+    participant U1 as User (session 1)
+    participant Agent1 as Agent
+    participant LTM as Qdrant: claude_agent_lab_memory
+    participant U2 as User (session 2, different thread_id)
+
+    U1->>Agent1: "Remember I prefer early returns over nested if/else."
+    Agent1->>LTM: remember(fact, category="style")
+    Note over U1,Agent1: STM (thread 1) also records this turn — but only for thread 1
+
+    U2->>Agent1: "How should I structure error handling?"
+    Agent1->>LTM: recall("error handling style")
+    LTM-->>Agent1: ranked fact — highest similarity
+    Agent1-->>U2: answer, informed by session 1's preference
+      </pre>
+
+      <div class="callout"><span class="icon">Why not auto-inject LTM every turn?</span>
+        <p>Considered and rejected: always running <code class="inline">recall(question)</code> before every turn guarantees nothing relevant is missed, but costs an embedding + vector search on <em>every single question</em>, even ones with no relevant history, and makes "why did the model bring this up" invisible &mdash; not a traceable tool call, just silently-added context. Explicit tool calls cost nothing when irrelevant and stay visible in the same trace every other tool call already produces.</p>
+      </div>
+    </section>
+
+    <!-- 8 -->
+    <section class="sec" id="s8">
+      <div class="sec-head"><span class="sec-num">09</span><h2>Caching</h2><span class="sec-time">0:25&ndash;0:27</span></div>
+      <p class="sec-dek">Not a string-match cache &mdash; a <em>semantic</em> one, because two people rarely ask a question the same way twice.</p>
+      <h4 class="micro">Why bother, specifically</h4>
+      <ul class="pt tight">
+        <li>Every <code class="inline">/ask</code> miss costs an embedding call, a Qdrant search, and a full LLM generation &mdash; the three most expensive, slowest steps in the whole system, paid in full on every single question.</li>
+        <li>Real usage clusters: the same handful of questions ("how does X work," "where is Y configured") get asked repeatedly, worded slightly differently each time &mdash; a plain exact-match cache would miss almost all of that repetition; a semantic one catches it.</li>
+      </ul>
+      <h4 class="micro">How it's actually built here</h4>
+      <ul class="pt tight">
+        <li>Backed by Redis + <b>RediSearch</b> (via <code class="inline">redisvl</code>): each cached entry stores a query embedding (HNSW index, cosine distance) alongside the response.</li>
+        <li>A lookup embeds the incoming question, finds the nearest cached query, and only returns it if similarity &ge; threshold (default <code class="inline">0.85</code>) &mdash; a near-miss is treated as a cache miss, not a wrong answer.</li>
+        <li>Filtered on two tags at once: <b>domain</b> (a hash of the repo path, so two different projects indexed by the same install never collide) and <b>model</b> (a cached answer from Claude is never served under Groq &mdash; correct behaviour when the provider is a config-only switch, per Section&nbsp;4's cousin decision).</li>
+        <li>Each entry has a TTL (default 24h); Redis expiry handles cleanup &mdash; no manual garbage collection.</li>
+        <li>Invalidated by domain when the codebase changes &mdash; wired to the same watcher callback as Section 5, so it currently inherits that section's Qdrant-vs-Chroma gap too.</li>
+        <li><b>Degrades gracefully, on purpose:</b> if Redis is unreachable, or reachable but missing the RediSearch module (plain <code class="inline">redis-server</code> doesn't ship it &mdash; Redis Stack does), <code class="inline">build_semantic_cache()</code> catches the failure and returns <code class="inline">None</code>. The whole app runs fine with caching simply off, rather than crashing at startup.</li>
+      </ul>
+    </section>
+
+    <!-- 9 -->
+    <section class="sec" id="s9">
+      <div class="sec-head"><span class="sec-num">10</span><h2>Tools vs. MCP &mdash; and whether MCP earns its place</h2><span class="sec-time">0:27&ndash;0:29</span></div>
+      <p class="sec-dek">Two ways to give the agent a capability, with genuinely different cost profiles &mdash; and this project's own MCP setup has a real redundancy worth naming out loud.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th></th><th>In-process tool</th><th>MCP server</th></tr></thead>
+        <tbody>
+          <tr><td><b>Examples here</b></td><td class="mono">read_file, write_file, run_command</td><td class="mono">github, filesystem (both via npx / stdio)</td></tr>
+          <tr><td><b>Runs</b></td><td>Same Python process, plain function call</td><td>Separate subprocess, JSON-RPC over stdio</td></tr>
+          <tr><td><b>Cost per call</b></td><td>Near zero</td><td>A live session round-trip; naive reconnect-per-call can even respawn the subprocess (a real bug hit and fixed in this project &mdash; see callout)</td></tr>
+          <tr><td><b>Best for</b></td><td>Local, fast, fully-trusted capability you're happy to own and secure yourself</td><td>A capability that lives behind someone else's maintained protocol server &mdash; not worth reimplementing or re-securing</td></tr>
+        </tbody>
+      </table></div>
+      <ul class="pt tight">
+        <li>The <b>GitHub</b> MCP server earns its place: nothing in-process replicates "open a PR," "search code across GitHub," "list issues" &mdash; that's exactly the case MCP is for.</li>
+        <li>The <b>filesystem</b> MCP server substantially overlaps <code class="inline">tools/filesystem_tools.py</code>, which already does read/write/list in-process. Genuinely redundant today &mdash; a fair "what would you cut" answer.</li>
+        <li>Both servers are launched via <code class="inline">npx</code>; the filesystem one is sandboxed to the current working directory by its own startup args (the client doesn't implement MCP's dynamic "Roots" negotiation, so it falls back to that static scope &mdash; which is exactly the scope wanted here).</li>
+      </ul>
+      <div class="callout warn"><span class="icon">Lesson learned the hard way</span>
+        <p>The MCP client library's simplest API opens a <em>new session per tool call</em> by design &mdash; for a stdio server that means respawning the whole subprocess on every single call. Fixed by holding one session per server open for the app's entire lifetime instead. General lesson: MCP tools have a process/network cost that in-process tools don't, and a "stateless-looking" client API can hide a very stateful, very slow default.</p>
+      </div>
+    </section>
+
+    <!-- 10 -->
+    <section class="sec" id="s10">
+      <div class="sec-head"><span class="sec-num">11</span><h2>Skills &mdash; progressive disclosure</h2><span class="sec-time">0:29&ndash;0:31</span></div>
+      <p class="sec-dek">A lazy-loading pattern applied to prompt context: pay for detailed instructions only on the turns that actually need them.</p>
+
+      <h4 class="micro">Why this matters at all</h4>
+      <ul class="pt tight">
+        <li>The system prompt already carries a real, fixed cost every single call: the base instructions, the memory policy (Section 8), and now the tool definitions for ~46 tools (Section 10). Every additional capability described in full, permanently, in that same prompt makes <em>every</em> call &mdash; even a trivial one &mdash; more expensive and slower, whether or not that capability is used this turn.</li>
+        <li>Skills exist to break that link: a specialised, verbose playbook (a debugging procedure, a project-specific test-writing convention) should cost tokens only on the turns that actually need it &mdash; not on the other 99% of calls that don't.</li>
+      </ul>
+
+      <div class="grid3">
+        <div class="card"><h4><span class="dot" style="background:var(--accent)"></span>Tier 1 &mdash; always paid</h4><ul><li>System prompt carries only <code class="inline">name + description + when_to_use</code> per skill &mdash; a few tokens each, every single call.</li></ul></div>
+        <div class="card"><h4><span class="dot" style="background:var(--accent)"></span>Tier 2 &mdash; on demand</h4><ul><li>Model calls <code class="inline">load_skill(name)</code>; the full <code class="inline">SKILL.md</code> body (500&ndash;2,000 tokens) enters context only for that turn.</li></ul></div>
+        <div class="card"><h4><span class="dot" style="background:var(--accent)"></span>Tier 3 &mdash; on demand</h4><ul><li>If the skill references support files (scripts/templates), the model reads them individually with the existing <code class="inline">read_file</code> tool.</li></ul></div>
+      </div>
+      <ul class="pt tight">
+        <li><b>Without skills:</b> every specialised instruction the agent might ever need has to live permanently in the system prompt &mdash; cost scales with everything the agent <em>could</em> be asked, not what it's doing right now.</li>
+        <li><b>With skills:</b> the system prompt carries a one-line index; a whole debugging playbook or test-writing template is loaded exactly when it's relevant.</li>
+        <li><b>Tradeoff:</b> quality depends on the <code class="inline">description</code>/<code class="inline">when_to_use</code> metadata being good enough for the model to self-select correctly &mdash; a vague description means a skill that silently never fires.</li>
+      </ul>
+
+      <div class="callout warn"><span class="icon">How this project actually uses it, today</span>
+        <p>Honestly: the <em>infrastructure</em> is fully built and wired into the agent (<code class="inline">SkillRegistry</code>, the <code class="inline">load_skill</code> tool, the three-tier loading path above) &mdash; but no <code class="inline">SKILL.md</code> ships with the project yet, and <code class="inline">.agent_lab/skills/</code> doesn't exist until someone creates it. <code class="inline">build_skills_prompt()</code> correctly returns an empty string and logs <code class="inline">"skills_dir not found... No skills loaded"</code> rather than erroring. This is a real, current gap worth naming plainly rather than implying skills are in active use: the mechanism is proven and tested, the content library is empty.</p>
+      </div>
+    </section>
+
+    <!-- 11 -->
+    <section class="sec" id="s11">
+      <div class="sec-head"><span class="sec-num">12</span><h2>Long-running tasks &mdash; why <code class="inline" style="font-size:.85em">/plan</code> exists at all</h2><span class="sec-time">0:31&ndash;0:34</span></div>
+      <p class="sec-dek">A single agent turn is the wrong unit of work for "scaffold this feature" &mdash; too big to verify at once, too risky to run unsupervised, and it needs to survive being interrupted.</p>
+      <ul class="pt">
+        <li><b>Decompose a fuzzy goal into a verifiable DAG</b> &mdash; the planner's own system prompt enforces ordering (architecture &rarr; schema &rarr; config &rarr; core &rarr; tests &rarr; integration) and concrete <code class="inline">acceptance_criteria</code> per task.</li>
+        <li><b>Human approval before any code is written</b> &mdash; <code class="inline">[A]pprove / [M]odify / [R]eject</code> loop; a rejection re-plans with the human's stated feedback.</li>
+        <li><b>Least-privilege tools per task type</b> &mdash; a <code class="inline">design</code> task can't run shell commands; a <code class="inline">test</code> or <code class="inline">integrate</code> task can.</li>
+        <li><b>Don't trust the sub-agent's own "I'm done"</b> &mdash; an LLM-as-judge (cheaper <code class="inline">judge_model</code>) scores the output 0&ndash;10 against that task's own acceptance criteria; below 6, it's rejected and retried automatically.</li>
+        <li><b>Survive a crash without ambiguity</b> &mdash; state lives in SQLite (WAL mode), not memory; every transition is one atomic UPDATE.</li>
+        <li><b>Resume exactly where it left off</b> &mdash; on restart, any task still <code class="inline">in_progress</code> is unconditionally orphaned (single-process serial execution means the process that owned it is simply gone) and reset to <code class="inline">pending</code> (retries left) or <code class="inline">failed</code> (exhausted) &mdash; no heartbeat mechanism needed.</li>
+        <li><b>Reindex when it's done</b> &mdash; so <code class="inline">/ask</code> can immediately answer questions about files the plan just created (this is the "explicit reindex" trigger from Section 5).</li>
+      </ul>
+      <pre class="mermaid">
+stateDiagram-v2
+    [*] --> pending
+    pending --> in_progress: claim_task()
+    in_progress --> completed: judge passed
+    in_progress --> pending: judge failed, retries left
+    in_progress --> failed: retries exhausted
+    pending --> blocked: a dependency failed
+    completed --> [*]
+    failed --> [*]
+    blocked --> [*]
+    skipped --> [*]
+      </pre>
+      <div class="callout"><span class="icon">Why serial, not parallel</span>
+        <p><code class="inline">max_concurrent=1</code> is a deliberate choice, not a limitation. Most tasks are sequentially dependent anyway (schema before core, core before tests), shared repo state makes true parallel writes risky, and N parallel LLM agents multiplies cost for work that mostly has to happen in order. Revisit only once cost stops being the binding constraint.</p>
+      </div>
+    </section>
+
+    <!-- patterns -->
+    <section class="sec" id="s-patterns">
+      <div class="sec-head"><span class="sec-num">13</span><h2>Naming the architecture &mdash; the vocabulary interviewers reach for</h2><span class="sec-time">0:33&ndash;0:35</span></div>
+      <p class="sec-dek">Everything in Sections 7&ndash;12 already implements a small set of well-known agentic workflow patterns (per Anthropic's own "Building Effective Agents" taxonomy, plus the standard HITL/ReAct vocabulary). Naming them precisely &mdash; including the ones deliberately <em>not</em> used &mdash; is exactly what separates "I built an agent" from "I can reason about agent architecture."</p>
+
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Pattern</th><th>Used here?</th><th>Where</th></tr></thead>
+        <tbody>
+          <tr><td><b>ReAct</b> (Reason &rarr; Act &rarr; Observe, repeat)</td><td><span class="col-good">&#10003; core loop</span></td><td>Every agent turn &mdash; both the <code class="inline">/ask</code> agent (Section 7) and each <code class="inline">/plan</code> sub-agent (Section 12) run the identical LangGraph ReAct loop</td></tr>
+          <tr><td><b>Tool Use</b></td><td><span class="col-good">&#10003; foundational</span></td><td>Everything is a tool call &mdash; retrieval, memory, filesystem, shell, MCP &mdash; nothing is a silent side effect (Section 10)</td></tr>
+          <tr><td><b>Routing</b></td><td><span class="col-good">&#10003; but deterministic, not learned</span></td><td><code class="inline">main.py</code>'s command dispatch (<code class="inline">/ask</code> vs. <code class="inline">/plan</code> vs. <code class="inline">/reindex</code>) &mdash; a plain string-prefix switch, not an LLM/classifier deciding the route</td></tr>
+          <tr><td><b>Prompt Chaining</b></td><td><span class="col-good">&#10003;</span></td><td>The <code class="inline">/plan</code> pipeline itself: plan-LLM &rarr; human gate &rarr; execute-LLM &rarr; judge-LLM &mdash; each step's output is validated before the next runs, the textbook shape of chaining-with-gates</td></tr>
+          <tr><td><b>Orchestrator&ndash;Workers</b></td><td><span class="col-good">&#10003; the whole point of <code class="inline">tasks/</code></span></td><td><code class="inline">TaskOrchestrator</code> dynamically decomposes an unpredictable goal into subtasks and dispatches a fresh worker sub-agent per task &mdash; exactly the case this pattern is meant for: you can't know the subtask list ahead of time</td></tr>
+          <tr><td><b>Evaluator&ndash;Optimizer</b></td><td><span class="col-good">&#10003; partially &mdash; see caveat below</span></td><td>The LLM-as-judge scores each task's output and triggers a retry on failure (Section 12)</td></tr>
+          <tr><td><b>Human-in-the-Loop (HITL)</b></td><td><span class="col-good">&#10003; an explicit gate</span></td><td><code class="inline">present_plan_for_approval</code>'s <code class="inline">[A]pprove / [M]odify / [R]eject</code> loop &mdash; execution cannot begin until a human clears it</td></tr>
+          <tr><td><b>Parallelization</b> (fan-out/fan-in &mdash; "Sectioning" or "Voting")</td><td><span class="col-bad">&#10007; deliberately absent</span></td><td><code class="inline">max_concurrent=1</code> &mdash; every independent subtask still runs one at a time, not fanned out concurrently and joined back (Section 12's "why serial, not parallel")</td></tr>
+          <tr><td><b>Reflection</b> (self-critique by the <em>same</em> agent)</td><td><span class="col-bad">&#10007; not this</span></td><td>Easy to confuse with Evaluator-Optimizer &mdash; this project uses a <em>separate</em> judge call, never the acting agent critiquing its own output</td></tr>
+          <tr><td><b>Supervisor / multi-agent collaboration</b></td><td><span class="col-bad">&#10007; not this either</span></td><td>Workers never run concurrently or negotiate with each other; a plain SQLite-backed scheduler (not an LLM) decides who runs next, strictly one at a time</td></tr>
+        </tbody>
+      </table></div>
+
+      <div class="callout warn"><span class="icon">The honest caveat</span>
+        <p>Calling the judge/retry loop a full <b>Evaluator-Optimizer</b> pattern slightly overstates it. In Anthropic's own definition, the optimizer step <em>uses</em> the evaluator's feedback to refine the next attempt. Here, <code class="inline">fail_task()</code> records the judge's rejection reason in the <code class="inline">error</code> column &mdash; but <code class="inline">_build_system_prompt()</code> never actually reads that field back into the retried task's prompt. The retry is a fresh, blind attempt at the same instructions, not a refinement informed by <em>why</em> it failed last time. A one-line fix (thread <code class="inline">task['error']</code> into the retried prompt as "your previous attempt was rejected because...") would close this gap and make it a <em>true</em> Evaluator-Optimizer loop &mdash; exactly the kind of precise, self-aware distinction worth volunteering rather than letting an interviewer catch.</p>
+      </div>
+
+      <div class="callout good"><span class="icon">If asked "why no fan-out?"</span>
+        <p>The honest answer, not a dodge: independent subtasks (e.g. writing two unrelated config files) <em>could</em> fan out and join back once both complete &mdash; nothing about the DAG model in Section 12 prevents it. It doesn't today because <code class="inline">max_concurrent=1</code> was chosen deliberately for cost and determinism (Section 12), not because the orchestrator is incapable of it. Section 17 names exactly what adding it back would look like.</p>
+      </div>
+    </section>
+
+    <!-- lld -->
+    <section class="sec" id="s-lld">
+      <div class="sec-head"><span class="sec-num">14</span><h2>LLD &amp; the practices actually followed</h2><span class="sec-time">0:33&ndash;0:36</span></div>
+      <p class="sec-dek">Zooming from architecture into the actual classes, schemas, and error-handling conventions &mdash; the level a good LLD round probes.</p>
+
+      <h4 class="micro">Core data models</h4>
+      <div class="grid2">
+        <div class="card"><h4><span class="dot" style="background:var(--accent)"></span>Structured LLM output (Pydantic)</h4><ul>
+          <li><code class="inline">PlannedTask</code> &mdash; id, title, description, task_type, depends_on, output_files, acceptance_criteria, estimated_minutes</li>
+          <li><code class="inline">ExecutionPlan</code> &mdash; project_name, goal_summary, tech_stack, tasks: list[PlannedTask], risks, assumptions</li>
+          <li><code class="inline">_JudgeVerdict</code> &mdash; passed: bool, score: 0&ndash;10, reason: str</li>
+        </ul></div>
+        <div class="card"><h4><span class="dot" style="background:var(--accent-2)"></span>Persistence schema (SQLite)</h4><ul>
+          <li><code class="inline">projects(id, name, goal, plan_json, status, approved_at)</code></li>
+          <li><code class="inline">tasks(id, project_id, status, depends_on, output_files, acceptance_criteria, retry_count, max_retries, execution_order, result, error)</code></li>
+          <li>Index on <code class="inline">(project_id, status)</code> &mdash; the exact pair every scheduling query filters on</li>
+        </ul></div>
+      </div>
+
+      <h4 class="micro">Two different error-handling conventions, on purpose</h4>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Consumer</th><th>Convention</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>An LLM, via a tool call</td><td>Return a plain <code class="inline">"Error: ..."</code> string, never raise</td><td>A raised exception would crash the agent graph; a returned string becomes a normal tool result the model can read and self-correct from</td></tr>
+          <tr><td>Internal control flow (the task executor)</td><td>Raise <code class="inline">ValueError</code> on judge rejection or empty output</td><td>This is meant to be caught &mdash; it's exactly the signal <code class="inline">TaskOrchestrator._execute</code>'s existing <code class="inline">try/except</code> uses to trigger the retry path in <code class="inline">fail_task()</code></td></tr>
+        </tbody>
+      </table></div>
+
+      <h4 class="micro">Best practices this project actually follows</h4>
+      <ul class="pt tight">
+        <li><b>Factory functions for every swappable backend</b> &mdash; <code class="inline">get_llm()</code>, <code class="inline">get_embedder()</code>, <code class="inline">get_indexer()</code>, <code class="inline">get_retriever()</code> each hide an if/elif behind one call, so callers never know or care which provider is live.</li>
+        <li><b>Dataclasses/Pydantic at every structural boundary</b> &mdash; <code class="inline">ParsedChunk</code>, <code class="inline">Task</code>, <code class="inline">PlannedTask</code>/<code class="inline">ExecutionPlan</code> &mdash; so a chunk or a task is a typed shape passed around, never a loose dict with implicit fields.</li>
+        <li><b>Context-manager-scoped DB connections</b> &mdash; <code class="inline">SQLiteTaskStore._conn()</code> opens, commits/rolls back, and closes a connection per operation; no shared long-lived connection to leak across threads.</li>
+        <li><b>Atomic single-UPDATE state transitions</b> &mdash; <code class="inline">claim_task()</code>'s <code class="inline">WHERE status='pending'</code> clause makes the claim itself the concurrency guard, no separate lock needed.</li>
+        <li><b>Least-privilege by construction</b> &mdash; <code class="inline">_TOOLS_BY_TYPE</code> is a dict literal, not a runtime permission check; a <code class="inline">design</code> task's agent is never even handed a shell-executing tool to misuse.</li>
+        <li><b>Graceful degradation returns <code class="inline">None</code>, doesn't crash</b> &mdash; <code class="inline">build_semantic_cache()</code> catches Redis/module failures; a value of <code class="inline">None</code> is a first-class, checked case at every call site, not an exceptional one.</li>
+        <li><b>One config dict, read once</b> &mdash; every module imports the same already-parsed <code class="inline">config</code> object rather than re-reading <code class="inline">config.yaml</code>, so a run is internally consistent even if the file changes on disk mid-session.</li>
+      </ul>
+    </section>
+
+    <!-- 12 -->
+    <section class="sec" id="s12">
+      <div class="sec-head"><span class="sec-num">15</span><h2>Observability</h2><span class="sec-time">0:34&ndash;0:35</span></div>
+      <ul class="pt tight">
+        <li>One shared logger config: this project's own modules log at <code class="inline">DEBUG</code>, third-party libraries are held at <code class="inline">WARNING</code> by default &mdash; with a couple of <em>named, deliberate</em> overrides (e.g. silencing one harmless-but-noisy Gemini schema warning) rather than a blanket suppression.</li>
+        <li>What's actually logged: every tool call and its input, every retrieval (mode, query, top-k scores), every LLM provider/model selection, every task state transition, every MCP server connection.</li>
+        <li><b>Honest gaps:</b> no correlation/trace ID tying every log line from one <code class="inline">/ask</code> turn together; no latency histograms or metrics, just point-in-time log lines; stdout only &mdash; no rotation or persistent log storage configured.</li>
+      </ul>
+    </section>
+
+    <!-- 13 -->
+    <section class="sec" id="s13">
+      <div class="sec-head"><span class="sec-num">16</span><h2>End-to-end &amp; "where is it actually stored"</h2><span class="sec-time">0:35</span></div>
+      <p class="sec-dek">The question that ties every prior section together &mdash; here's the map.</p>
+      <div class="tbl-wrap storewrap"><table>
+        <thead><tr><th>What</th><th>Storage kind</th><th>Where</th></tr></thead>
+        <tbody>
+          <tr><td>Conversation history (STM)</td><td>SQLite</td><td class="mono">.agent_lab/memory/memory.db</td></tr>
+          <tr><td>Active session pointer</td><td>Plain text file</td><td class="mono">.agent_lab/memory/current_session</td></tr>
+          <tr><td>Long-term facts (LTM)</td><td>Qdrant collection</td><td class="mono">claude_agent_lab_memory</td></tr>
+          <tr><td>Code index</td><td>Qdrant collection (or Chroma dir)</td><td class="mono">claude_agent_lab / .agent_lab/chromadb/</td></tr>
+          <tr><td>Semantic cache entries</td><td>Redis (RediSearch/HNSW)</td><td class="mono">key prefix cache:*</td></tr>
+          <tr><td>Plan / task state</td><td>SQLite, WAL mode</td><td class="mono">.agent_lab/tasks.db</td></tr>
+          <tr><td>Skills</td><td>Filesystem</td><td class="mono">.agent_lab/skills/&lt;name&gt;/SKILL.md</td></tr>
+          <tr><td>MCP server definitions</td><td>JSON file</td><td class="mono">mcp_servers.json</td></tr>
+          <tr><td>App configuration</td><td>YAML file</td><td class="mono">config.yaml</td></tr>
+          <tr><td>Secrets / API keys</td><td>Env file, never committed</td><td class="mono">.env (python-dotenv)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h4 class="micro">The full <code class="inline">/plan</code> flow, for completeness</h4>
+      <ol class="flow-list">
+        <li><b>Goal in</b> &mdash; user runs <code class="inline">/plan &lt;goal&gt;</code>. <span class="where">tasks/orchestrator.py</span></li>
+        <li><b>Existing project?</b> &mdash; resume + recover crashed tasks if one's already approved; otherwise plan fresh. <span class="where">task_store.get_latest_approved_project()</span></li>
+        <li><b>LLM plans</b> &mdash; goal &rarr; structured <code class="inline">ExecutionPlan</code> (5&ndash;20 tasks, valid DAG). <span class="where">tasks/planner.py</span></li>
+        <li><b>Human approves/modifies/rejects</b> &mdash; loop until approved. <span class="where">tasks/approval.py</span></li>
+        <li><b>Persist</b> &mdash; one project row + N task rows, atomically. <span class="where">SQLite tasks.db</span></li>
+        <li><b>Orchestrator loop</b> &mdash; claim ready tasks, dispatch a fresh sub-agent per task with least-privilege tools. <span class="where">tasks/executor.py</span></li>
+        <li><b>Judge each result</b> &mdash; score vs. acceptance criteria; retry on failure. <span class="where">LLM-as-judge</span></li>
+        <li><b>Reindex</b> &mdash; so <code class="inline">/ask</code> knows about the new files immediately. <span class="where">context/indexers/factory.py</span></li>
+      </ol>
+    </section>
+
+    <!-- scale -->
+    <section class="sec" id="s-scale">
+      <div class="sec-head"><span class="sec-num">17</span><h2>Future work: scaling, cost &amp; evals</h2><span class="sec-time">0:38</span></div>
+      <p class="sec-dek">None of this is needed at today's actual scale (single user, single machine) &mdash; but naming what changes, and why, is exactly what an interviewer is checking for.</p>
+
+      <h3 class="sub"><span class="chip">Cost</span>Cost optimization</h3>
+      <ul class="pt tight">
+        <li><b>Prompt/KV caching &mdash; a real, unclaimed opportunity here.</b> The system prompt + tool definitions + the skills index (Section 11) are largely static across an entire session. Marking that block cacheable (Anthropic requires explicit <code class="inline">cache_control</code> breakpoints; OpenAI detects repeated prefixes implicitly) turns every call after the first into a cache-hit-priced call for that block &mdash; roughly a <b>0.1&times;</b> multiplier on that portion versus full price, against a <b>1.25&times;</b> multiplier paid once on the first call to write it. Not yet done in this project.</li>
+        <li><b>The judge-model pattern, generalized.</b> <code class="inline">llm.judge_model</code> already uses a cheaper model for a narrower job (score a task against acceptance criteria) &mdash; the same pattern could grade <code class="inline">/ask</code> answers for faithfulness without paying full-model price for every check.</li>
+        <li><b>Watch the parallelism gotcha.</b> Firing several cacheable calls at once, before the first has finished <em>writing</em> the cache, means none of them get the hit price &mdash; they all race past an empty cache. A single sequential warm-up call first avoids this.</li>
+      </ul>
+
+      <h3 class="sub"><span class="chip">Latency</span>Caching at every layer, not just one</h3>
+      <p style="max-width:70ch">This project caches exactly one layer today &mdash; the final LLM response (Section 9). A fuller pipeline caches independently at each stage, since each is deterministic-ish for a given input:</p>
+      <pre class="mermaid">
+flowchart LR
+    Q["Query"] --> EC{"Embedding\ncache?"}
+    EC -->|hit| RC
+    EC -->|miss| EMB["Embed query"] --> RC{"Retrieval\ncache?"}
+    RC -->|hit| GEN
+    RC -->|miss| VDB["Search vector store"] --> RR{"Rerank\ncache?"}
+    RR --> GEN{"Semantic\nresponse cache?\n(this project has this one)"}
+    GEN -->|hit| DONE["Return cached answer"]
+    GEN -->|miss| LLM["LLM generates"] --> DONE
+    style GEN fill:#2c7a6716,stroke:#2c7a67,stroke-width:1.5px
+      </pre>
+      <ul class="pt tight">
+        <li><b>Embedding cache</b> &mdash; the same question text always embeds to the same vector; skip re-embedding an exact repeat.</li>
+        <li><b>Retrieval cache</b> &mdash; the same embedding, against an unchanged index, returns the same top-k; worth caching between reindex events.</li>
+        <li><b>Reranking</b> &mdash; a real gap: this project's hybrid mode fuses dense+sparse scores but has no dedicated cross-encoder reranking pass at all today. Worth adding before worth caching.</li>
+        <li><b>Response cache</b> &mdash; already built (Section 9).</li>
+      </ul>
+
+      <h3 class="sub"><span class="chip">Throughput</span>Turning on Parallelization (fan-out/fan-in) for <code class="inline">/plan</code></h3>
+      <pre class="mermaid">
+flowchart LR
+    T["Ready tasks:\ntask_003, task_004, task_005\n(no unmet dependencies)"] --> F{"Fan out"}
+    F --> W1["Worker agent\ntask_003"]
+    F --> W2["Worker agent\ntask_004"]
+    F --> W3["Worker agent\ntask_005"]
+    W1 --> J["Fan in — join point:\nwait for all three, then\nunblock whatever depended on them"]
+    W2 --> J
+    W3 --> J
+      </pre>
+      <ul class="pt tight">
+        <li>The DAG model in Section 12 already tracks exactly which tasks are mutually independent (<code class="inline">get_ready_tasks()</code> returns <em>all</em> of them, not just one) &mdash; <code class="inline">TaskOrchestrator._execute</code> would just need to dispatch that whole ready batch via <code class="inline">asyncio.gather</code> instead of slicing to <code class="inline">[:max_concurrent]</code> with <code class="inline">max_concurrent=1</code>.</li>
+        <li>The real cost of turning this on isn't code &mdash; it's the two things Section 12 already named as the reason it's off: N parallel LLM calls billed simultaneously instead of one at a time, and shared-repo write safety once two worker agents can touch the filesystem concurrently.</li>
+      </ul>
+
+      <h3 class="sub"><span class="chip">Scale-out</span>Sharding &mdash; not needed today, but here's the reasoning</h3>
+      <pre class="mermaid">
+flowchart TD
+    Qy["Query"] --> S1["Shard: auth/"]
+    Qy --> S2["Shard: payments/"]
+    Qy --> S3["Shard: ui/"]
+    S1 --> M["Merge &amp; re-rank"]
+    S2 --> M
+    S3 --> M
+    M --> R["Final top-K"]
+      </pre>
+      <ul class="pt tight">
+        <li>A single Qdrant instance comfortably holds this project's own 185-chunk index &mdash; sharding would be pure overhead here.</li>
+        <li>Past the point one instance can't hold or serve the volume: <b>semantic sharding</b> (partition by module/domain, e.g. one shard per top-level package) beats random hash-based sharding, because a query whose domain is known can route to just the relevant shard instead of a full scatter-gather.</li>
+        <li>Scatter-gather's real cost: querying every shard and merging centrally means end-to-end latency is bounded by the <em>slowest</em> shard, and a disproportionately-hot shard (the module everyone asks about) needs its own replication, not just a bigger box.</li>
+      </ul>
+
+      <h3 class="sub"><span class="chip">Quality</span>Evals &amp; LLM-as-judge, expanded</h3>
+      <ul class="pt tight">
+        <li><b>Today's judge is narrow by design</b> &mdash; it only scores <code class="inline">/plan</code> task output against that task's own acceptance criteria. There is no regression eval at all for <code class="inline">/ask</code>'s retrieval or answer quality.</li>
+        <li><b>What a fuller eval loop would add:</b> a small hand-built golden set for this repo &mdash; (question, correct source chunk) pairs &mdash; scored on <b>Precision@K/Recall@K/MRR</b> for retrieval, plus <b>faithfulness</b> (does the answer only claim what the retrieved chunks actually support?) as a separate axis from <b>factuality</b> (is it true in reality?) &mdash; a stale-but-consistent retrieved chunk can produce a faithful yet wrong answer, and that's a retrieval/freshness bug (Section 6), not a generation bug.</li>
+        <li><b>Wire it in as a CI gate</b>, in the same "verify before shipping" spirit this project already practiced live &mdash; every fix in this document (the Qdrant HTTPS bug, the Groq <code class="inline">model_name</code> field, the MCP session-reuse bug) was confirmed against a real running instance before being called done, not assumed correct from reading the code. An offline eval threshold before any prompt/retrieval/model change ships is the same discipline, automated.</li>
+        <li><b>Then the rollout ladder</b>, only after the offline gate passes: <b>shadow</b> (new version sees real traffic, output never shown &mdash; zero user risk) &rarr; <b>canary</b> (5%&rarr;25%&rarr;50%&rarr;100% of real traffic, watching for regressions) &rarr; full rollout. Skipping straight to canary skips the one step that's genuinely free.</li>
+      </ul>
+    </section>
+
+    <!-- deploy -->
+    <section class="sec" id="s-deploy">
+      <div class="sec-head"><span class="sec-num">18</span><h2>Deployment</h2><span class="sec-time">0:39</span></div>
+      <p class="sec-dek">What actually shipped this session, and the concrete next step to make it deployable beyond one developer's laptop.</p>
+
+      <h4 class="micro">Today, as actually run</h4>
+      <ul class="pt tight">
+        <li>One machine, one user: the package installed locally (<code class="inline">poetry install</code> / <code class="inline">pip install -e .</code>), three local services &mdash; Qdrant, Redis Stack, optionally Ollama &mdash; each started by hand.</li>
+        <li>No auth boundary, no process supervision, no restart policy &mdash; entirely appropriate for the stated non-functional requirements (Section 1), and worth saying so plainly rather than apologizing for it.</li>
+      </ul>
+
+      <h4 class="micro">Next concrete step &mdash; still single-machine, but reproducible</h4>
+      <p style="max-width:72ch">Bundle the two real dependencies into one <code class="inline">docker-compose.yml</code> instead of manual <code class="inline">docker run</code> commands, following the same lessons this session hit in practice (pin versions, never <code class="inline">latest</code>; bind-mount volumes so data survives a restart; set <code class="inline">restart: unless-stopped</code>):</p>
+      <div class="tbl-wrap"><table><tbody>
+        <tr><td class="mono" style="white-space:pre; font-size:12px; line-height:1.7;">services:
+  qdrant:
+    image: qdrant/qdrant:v1.12.0
+    restart: unless-stopped
+    ports: ["6333:6333"]
+    volumes: ["./data/qdrant:/qdrant/storage"]
+
+  redis:
+    image: redis/redis-stack-server:7.4.0-v3
+    restart: unless-stopped
+    ports: ["6379:6379"]
+    volumes: ["./data/redis:/data"]</td></tr>
+      </tbody></table></div>
+
+      <h4 class="micro">If this ever became a hosted, multi-user product</h4>
+      <p style="max-width:72ch">The FastAPI dashboard already built (Phase 8) is the front door for this &mdash; but three assumptions from the single-user design would need to change first:</p>
+      <ul class="pt tight">
+        <li><b>SQLite &rarr; Postgres for task/session state.</b> WAL mode is genuinely fine for one writer + concurrent readers on one machine; it doesn't help once multiple app instances need to see the same task queue across a network.</li>
+        <li><b>Separate the API process from <code class="inline">/plan</code> execution.</b> A long-running task shouldn't block a request/response HTTP cycle &mdash; move task execution to a background worker process, with the API only enqueuing and polling status.</li>
+        <li><b>Tenant isolation on the vector store.</b> Either a dedicated Qdrant collection per customer (strongest isolation, doesn't scale past a handful of tenants) or one shared collection with a mandatory, server-derived <code class="inline">tenant_id</code> metadata filter baked into the query path itself &mdash; never trusted from client input, enforced at both the application layer and the DB-query layer so one missed filter clause can't become a cross-tenant data leak.</li>
+        <li><b>Every prompt/model/retrieval change ships through the rollout ladder</b> from Section 16 &mdash; offline eval gate, then shadow, then canary &mdash; rather than straight to 100% of a live customer base.</li>
+      </ul>
+    </section>
+
+    <!-- 14 -->
+    <section class="sec" id="s14">
+      <div class="sec-head"><span class="sec-num">19</span><h2>Tradeoffs &amp; what I'd change next</h2><span class="sec-time">Closing</span></div>
+      <div class="closer">
+        <h3>If given another week</h3>
+        <ul class="pt">
+          <li><b>Fix the watcher/cache-invalidation gap</b> (Section 5 &amp; 8) &mdash; make the on-change handler call whichever vector store <code class="inline">config.yaml</code> actually selects, not a hardcoded Chroma path.</li>
+          <li><b>Add forgetting/dedup to long-term memory</b> &mdash; a contradicted preference shouldn't just accumulate silently.</li>
+          <li><b>Add a correlation ID per <code class="inline">/ask</code> or <code class="inline">/plan</code> run</b> so its whole log trail is reconstructable as one unit.</li>
+          <li><b>Resolve the MCP filesystem / in-process filesystem-tool overlap</b> &mdash; keep one, not both.</li>
+          <li><b>Revisit serial task execution</b> once cost isn't the dominant constraint &mdash; parallelize independent DAG branches.</li>
+          <li><b>Multi-user/auth</b> only if the non-functional requirement ever actually changes &mdash; not before, per Section 1.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 15 -->
+    <section class="sec" id="s15">
+      <div class="sec-head"><span class="sec-num">20</span><h2>Glossary</h2></div>
+      <dl>
+        <div class="term"><dt>RAG</dt><dd>Retrieval-Augmented Generation &mdash; fetch relevant context via search, then generate an answer grounded in it.</dd></div>
+        <div class="term"><dt>MCP</dt><dd>Model Context Protocol &mdash; a standard for LLM apps to talk to external tool servers over a common (often stdio/JSON-RPC) interface.</dd></div>
+        <div class="term"><dt>STM / LTM</dt><dd>Short-term memory (this conversation) vs. long-term memory (facts that outlive any one conversation).</dd></div>
+        <div class="term"><dt>Hybrid retrieval</dt><dd>Combining dense (embedding/cosine) search with sparse (BM25/keyword) search so both meaning and exact terms are found.</dd></div>
+        <div class="term"><dt>HNSW</dt><dd>Hierarchical Navigable Small World &mdash; the approximate-nearest-neighbour index structure behind fast vector search.</dd></div>
+        <div class="term"><dt>Checkpointer</dt><dd>LangGraph's mechanism for persisting an agent's conversation state between calls, keyed by thread ID.</dd></div>
+        <div class="term"><dt>DAG</dt><dd>Directed Acyclic Graph &mdash; here, tasks with dependencies but no circular waits.</dd></div>
+        <div class="term"><dt>Debounce</dt><dd>Wait until events stop arriving before acting &mdash; avoids reacting to every intermediate filesystem event from a single save.</dd></div>
+        <div class="term"><dt>WAL mode</dt><dd>SQLite's Write-Ahead Log &mdash; crash-safe, allows concurrent reads while a write is in progress.</dd></div>
+        <div class="term"><dt>LLM-as-judge</dt><dd>Using a (often cheaper) LLM call to score another LLM's output against explicit criteria, instead of trusting a self-report.</dd></div>
+        <div class="term"><dt>ReAct</dt><dd>Reason &rarr; Act &rarr; Observe, repeat &mdash; the core loop behind almost every tool-calling agent, this one included.</dd></div>
+        <div class="term"><dt>HITL</dt><dd>Human-In-The-Loop &mdash; an explicit pause point where a person must approve before the system proceeds.</dd></div>
+        <div class="term"><dt>Orchestrator&ndash;Workers</dt><dd>A central process dynamically decomposes a goal and dispatches fresh worker agents per subtask &mdash; for goals whose subtasks can't be predicted upfront.</dd></div>
+        <div class="term"><dt>Evaluator&ndash;Optimizer</dt><dd>One LLM call generates, a second evaluates against criteria and feeds back into a refinement loop &mdash; not just a pass/fail gate with a blind retry.</dd></div>
+        <div class="term"><dt>Fan-out / fan-in</dt><dd>Dispatch independent work concurrently ("fan out"), then wait for all of it before continuing ("fan in") &mdash; the mechanics behind the Parallelization pattern and behind scatter-gather across shards.</dd></div>
+      </dl>
+    </section>
+
+    <footer class="doc-foot">claude_agent_lab &middot; interview walkthrough doc &middot; REPL/CLI scope only</footer>
+  </main>
+</div>
+
+<div id="diagBackdrop"></div>
+
+<script>
+(function(){
+  // ---------- diagram expand-in-place ----------
+  // Deliberately does NOT clone or move the rendered <svg> — mermaid's
+  // output relies on internal ids (markers, clip-paths, scoped <style>
+  // rules) that can silently fail to render once duplicated or reparented.
+  // Instead the real element is enlarged in place via CSS (position:fixed
+  // + transform:scale), so exactly one live copy ever exists.
+  var backdrop = document.getElementById('diagBackdrop');
+  var activeWrap = null;
+  var zoom = 1.5;
+
+  function applyZoom(pre){ pre.style.setProperty('--diag-zoom', zoom); }
+
+  function closeDiagram(){
+    if (!activeWrap) return;
+    activeWrap.classList.remove('diag-active');
+    backdrop.classList.remove('open');
+    document.body.classList.remove('diag-open');
+    activeWrap = null;
+  }
+
+  function openDiagram(wrap, pre){
+    if (activeWrap) closeDiagram();
+    activeWrap = wrap;
+    zoom = 1.5;
+    applyZoom(pre);
+    wrap.classList.add('diag-active');
+    backdrop.classList.add('open');
+    document.body.classList.add('diag-open');
+  }
+
+  function wrapDiagrams(){
+    var pres = document.querySelectorAll('pre.mermaid');
+    pres.forEach(function(pre){
+      if (pre.closest('.diagram-wrap')) return; // already wrapped
+      var sectionTitleEl = pre.closest('section.sec');
+      var titleText = 'Diagram';
+      if (sectionTitleEl){
+        var h2 = sectionTitleEl.querySelector('h2');
+        if (h2) titleText = h2.textContent;
+      }
+
+      var wrap = document.createElement('div');
+      wrap.className = 'diagram-wrap';
+      pre.parentNode.insertBefore(wrap, pre);
+      wrap.appendChild(pre);
+
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'expand-btn';
+      btn.innerHTML = '&#10021; Expand';
+      wrap.appendChild(btn);
+
+      var toolbar = document.createElement('div');
+      toolbar.className = 'diag-toolbar';
+      toolbar.innerHTML =
+        '<span class="diag-title"></span><div class="spacer"></div>' +
+        '<button type="button" data-act="out" title="Zoom out">&minus;</button>' +
+        '<button type="button" data-act="reset" title="Reset zoom">&#8634;</button>' +
+        '<button type="button" data-act="in" title="Zoom in">+</button>' +
+        '<button type="button" class="close-btn" data-act="close">Close ✕</button>';
+      toolbar.querySelector('.diag-title').textContent = titleText;
+      wrap.insertBefore(toolbar, wrap.firstChild);
+
+      toolbar.addEventListener('click', function(e){
+        var act = e.target.getAttribute('data-act');
+        if (!act) return;
+        if (act === 'close') closeDiagram();
+        if (act === 'in'){ zoom = Math.min(zoom + 0.25, 5); applyZoom(pre); }
+        if (act === 'out'){ zoom = Math.max(zoom - 0.25, 0.4); applyZoom(pre); }
+        if (act === 'reset'){ zoom = 1.5; applyZoom(pre); }
+      });
+
+      function openHandler(e){
+        if (wrap.classList.contains('diag-active')) return;
+        e.stopPropagation();
+        openDiagram(wrap, pre);
+      }
+      btn.addEventListener('click', openHandler);
+      pre.addEventListener('click', openHandler);
+    });
+  }
+
+  wrapDiagrams();
+  // Mermaid rendering (host-side) may replace pre contents asynchronously —
+  // re-scan briefly in case diagrams mount after this script runs.
+  var scanTries = 0;
+  var scanTimer = setInterval(function(){
+    wrapDiagrams();
+    if (++scanTries > 20) clearInterval(scanTimer);
+  }, 300);
+
+  backdrop.addEventListener('click', closeDiagram);
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && activeWrap) closeDiagram(); });
+
+  // ---------- TOC active-section highlighting ----------
+  var links = Array.prototype.slice.call(document.querySelectorAll('#tocNav a'));
+  var sections = links.map(function(a){ return document.querySelector(a.getAttribute('href')); }).filter(Boolean);
+  function onScroll(){
+    var pos = window.scrollY + 120;
+    var current = sections[0];
+    for (var i=0;i<sections.length;i++){
+      if (sections[i].offsetTop <= pos) current = sections[i];
+    }
+    links.forEach(function(a){ a.classList.remove('active'); });
+    var idx = sections.indexOf(current);
+    if (idx > -1) links[idx].classList.add('active');
+  }
+  document.addEventListener('scroll', onScroll, {passive:true});
+  onScroll();
+  links.forEach(function(a){
+    a.addEventListener('click', function(e){
+      e.preventDefault();
+      var target = document.querySelector(a.getAttribute('href'));
+      if (target) target.scrollIntoView({behavior:'smooth', block:'start'});
+    });
+  });
+})();
+</script>

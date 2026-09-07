@@ -21,6 +21,35 @@ What's here:
 - File watcher (`context/indexers/watcher.py`) — re-invalidates the semantic cache when the codebase changes. **Known gap:** hardcoded to Chroma's per-file update functions regardless of `vector_store.provider` — with this fork's Qdrant default, file changes don't actually reach the live index; only a full re-index (`/reindex`, or the dashboard's "Re-index now") does. Ported as-is, documented rather than silently fixed — see `docs/progress.md`.
 - **Dashboard** (`claude_agent_lab/api/`, `frontend/`) — a FastAPI backend and React/Vite frontend over the same CLI backend: indexing status, `/ask` with its sources, and a live streamed view of the agent's tool calls. The one phase with no source to port from — see `docs/prd.md`'s Phase 8 detail.
 
+## System design walkthrough
+
+`docs/system-design-interview-walkthrough.html` is a self-contained, interactive reference doc — open it directly in a browser — written as a script for explaining this project's design end to end: functional/non-functional requirements, a worked use case, RAG vs. grep (and how Claude Code/Cursor/Copilot are publicly described to differ), indexing & freshness, STM vs. LTM, caching, tools vs. MCP, skills, the `/plan` task engine, named agentic architecture patterns (ReAct, Orchestrator-Workers, Evaluator-Optimizer, HITL — and which ones this project deliberately does *not* use), LLD, and a deployment plan. Every diagram in it expands to fullscreen with zoom.
+
+One diagram from it — the high-level architecture:
+
+```mermaid
+flowchart TB
+    U["User @ terminal"] -->|"/ask, /plan, /reindex ..."| REPL["main.py — REPL loop"]
+
+    REPL --> CFG["config.py / config.yaml\n(one dict, loaded once)"]
+    REPL --> IDX["Indexing pipeline\ntree-sitter chunker → embedder → vector store"]
+    REPL --> AGT["Agent\nLangGraph create_agent + tool list"]
+    REPL --> CACHE["Semantic cache\nRedis + RediSearch"]
+    REPL --> WATCH["Filesystem watcher\ndebounced reindex"]
+    REPL --> TASKS["Task engine\nplanner → orchestrator → judge"]
+
+    AGT --> STM["Short-term memory\nLangGraph SQLite checkpointer"]
+    AGT --> LTM["Long-term memory\nQdrant: claude_agent_lab_memory"]
+    AGT --> TOOLS["In-process tools\nfilesystem + terminal"]
+    AGT --> MCP["MCP client\nGitHub + filesystem servers"]
+    AGT -->|"search_codebase"| IDX
+
+    IDX --> VDB[("Vector store\nQdrant (hybrid) or Chroma")]
+    CACHE --> REDIS[("Redis + RediSearch\nHNSW / cosine")]
+    TASKS --> TDB[("SQLite: tasks.db\nWAL mode")]
+    STM --> MDB[("SQLite: memory.db")]
+```
+
 ## Getting Started
 
 **Prerequisites:**
@@ -162,7 +191,8 @@ claude_agent_lab/              ← repo
 ├── frontend/                    ← React + Vite dashboard (Phase 8)
 ├── docs/
 │   ├── prd.md
-│   └── progress.md
+│   ├── progress.md
+│   └── system-design-interview-walkthrough.html   ← open in a browser
 ├── .env.example
 ├── CLAUDE.md
 └── pyproject.toml
