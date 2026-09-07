@@ -13,6 +13,11 @@ tasks:
  db_path: .agent_lab/tasks.db
 
 llm:
+ # provider: anthropic | openai | gemini | groq | ollama
+ # Switching providers is a config-only change — llm/factory.py picks the
+ # matching LangChain integration and API key env var automatically
+ # (ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY / GROQ_API_KEY;
+ # ollama needs no key, just a local server — see .env.example).
  provider: anthropic
  model: claude-opus-5
  judge_model: claude-haiku-4-5   # cheaper model used only for LLM-as-judge

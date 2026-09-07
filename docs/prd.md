@@ -20,6 +20,8 @@ The reference project is a CLI tool ("Educosys Claude" in the original) that let
 
 **Provider defaults changed from the source:** the source defaults to OpenAI for both chat (`gpt-5.5`) and embeddings (`text-embedding-3-small`). This fork defaults `llm.provider` to `anthropic` (`claude-opus-5`) — matching the project's own name and purpose — and `embeddings.provider` to `huggingface` (a local, no-API-key model) rather than OpenAI, so running this fork doesn't require a second provider's API key for no reason. Both providers were already supported by the source's `llm/factory.py` — this is a config default change, not new code.
 
+**LLM provider enhancement (Phase 1, post-port):** `llm/factory.py::get_llm()` extended with three more provider branches beyond the source's `anthropic`/`openai` — `gemini`, `groq`, `ollama` — same pattern, same config-only switch. See `docs/progress.md`.
+
 `mcp_demo` reference script was evaluated and excluded — the reference project's own `mcp/` module already supersedes it with a config-driven, logged, reusable implementation. Not part of this build.
 
 ## Phase-Wise Action Items
