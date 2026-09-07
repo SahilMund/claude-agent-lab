@@ -37,7 +37,7 @@ Each row is a directory that already exists in the source reference — porting 
 | **5** | `phase-5-mcp` | MCP tool integration | `mcp/`, `mcp_servers.json` (renamed per mapping) | Ported, verified (GitHub + filesystem servers, 40 tools loaded) |
 | **6** | `phase-6-task-planning` | Agentic task planner | `tasks/` | Ported |
 | **7** | `phase-7-production` | Production-grade concerns | `cache/`, `skills/`, `context/indexers/watcher.py` | Ported |
-| **8** | `phase-8-frontend` | Dashboard UI over the existing backend | *(no source equivalent — new work)* | Not started |
+| **8** | `phase-8-frontend` | Dashboard UI over the existing backend | *(no source equivalent — new work)* | Built, verified end-to-end |
 
 **Phase 8 detail** (the one phase with no source to port from): a FastAPI service (`api/app.py`, `api/routes.py`) exposing indexing, `/ask` retrieval, and the agent's tool-use loop over HTTP (streaming for the agent's live trace), plus a React + Vite SPA (`frontend/`) with three views — indexing status, an ask view showing the answer plus its retrieved sources, and an agent view showing the tool-call trace live. Additive to the CLI, not a replacement for it — the REPL stays the primary interface.
 
