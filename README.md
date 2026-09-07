@@ -18,7 +18,8 @@ What's here:
 - **Tasks** (`tasks/`) — a `/plan <goal>` planner/executor with approval and recovery steps.
 - **Cache** (`cache/`) — Redis-backed semantic cache for `/ask` answers; degrades to "disabled" instead of crashing if Redis isn't running.
 - **Skills** (`skills/`) — a skill registry loaded as agent tools.
-- File watcher (`context/indexers/watcher.py`) — re-invalidates the semantic cache when the codebase changes.
+- File watcher (`context/indexers/watcher.py`) — re-invalidates the semantic cache when the codebase changes. **Known gap:** hardcoded to Chroma's per-file update functions regardless of `vector_store.provider` — with this fork's Qdrant default, file changes don't actually reach the live index; only a full re-index (`/reindex`, or the dashboard's "Re-index now") does. Ported as-is, documented rather than silently fixed — see `docs/progress.md`.
+- **Dashboard** (`claude_agent_lab/api/`, `frontend/`) — a FastAPI backend and React/Vite frontend over the same CLI backend: indexing status, `/ask` with its sources, and a live streamed view of the agent's tool calls. The one phase with no source to port from — see `docs/prd.md`'s Phase 8 detail.
 
 ## Getting Started
 
@@ -27,6 +28,11 @@ What's here:
 - A running Qdrant instance — `docker run -p 6333:6333 qdrant/qdrant` (or point `QDRANT_URL`/`QDRANT_API_KEY` at a remote one). The CLI does not run without this — indexing happens at startup.
 - Node.js/`npx` — the MCP servers (GitHub, filesystem) launch via `npx`.
 - Optional: Redis (`redis://localhost:6379`) for the semantic cache — the app runs fine without it, just without caching.
+
+The first run downloads the local embedding model from Hugging Face Hub; after that it's
+cached (`~/.cache/huggingface`). If you restart the app often during development and hit
+`HTTP Error 429 ... Rate limited` on startup, set `HF_HUB_OFFLINE=1` to skip the network
+metadata check and use the cached model directly.
 
 ```bash
 # 1. Install dependencies (Poetry, or plain pip -e .)
@@ -56,6 +62,22 @@ On startup, the CLI indexes the current directory (skipping unchanged data on re
 > /task_status           # show progress on active plans
 ```
 
+### Dashboard (Phase 8)
+
+The same backend, over HTTP, with a React frontend on top:
+
+```bash
+# with Qdrant already running and .env configured (see above)
+uvicorn claude_agent_lab.api.app:app --port 8000
+
+# in a second terminal
+cd frontend
+npm install
+npm run dev
+```
+
+Open the printed Vite URL (usually `http://localhost:5173`). See `frontend/README.md` for details.
+
 ## What was fixed during the port
 
 Real bugs found and fixed while porting, not hypothetical:
@@ -78,7 +100,7 @@ See `docs/progress.md` for the full writeup, including what was *not* changed an
 | 5 | MCP tool integration | Ported, verified (GitHub + filesystem servers, 40 tools) |
 | 6 | Agentic task planner | Ported |
 | 7 | Production concerns (cache, watcher, skills) | Ported |
-| 8 | Dashboard UI (FastAPI + React) | Not started — no source equivalent, genuinely new work |
+| 8 | Dashboard UI (FastAPI + React) | Built, verified end-to-end (real Qdrant, real MCP servers, real retrieval quality) — no source equivalent, genuinely new work |
 
 Full detail: `docs/prd.md`.
 
@@ -88,6 +110,7 @@ Full detail: `docs/prd.md`.
 claude_agent_lab/              ← repo
 ├── claude_agent_lab/           ← the package
 │   ├── agent/                  ← LangChain/LangGraph agent factory + orchestrator
+│   ├── api/                    ← FastAPI app + routes (Phase 8)
 │   ├── cache/                  ← Redis-backed semantic cache
 │   ├── context/
 │   │   ├── indexers/           ← tree-sitter chunking, semantic/hybrid indexers, file watcher
@@ -102,6 +125,7 @@ claude_agent_lab/              ← repo
 │   ├── config.py / config.yaml
 │   ├── mcp_servers.json
 │   └── main.py
+├── frontend/                    ← React + Vite dashboard (Phase 8)
 ├── docs/
 │   ├── prd.md
 │   └── progress.md
