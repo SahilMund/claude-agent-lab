@@ -381,7 +381,7 @@ flowchart TB
       </pre>
 
       <ul class="pt tight">
-        <li>Everything routes through <code class="inline">main.py</code>'s command loop &mdash; there's no separate server process for the REPL (the FastAPI dashboard in <code class="inline">api/</code> is a second front end over the same functions, out of scope for this walkthrough).</li>
+        <li>Everything routes through <code class="inline">main.py</code>'s command loop &mdash; there's no separate server process. A FastAPI+React dashboard was built as a second front end over the same functions and later removed (it wasn't reliable enough to keep); the REPL is the only interface now.</li>
         <li><code class="inline">config.yaml</code> is read once at import time into a plain dict (<code class="inline">config.py</code>) &mdash; every module imports that same dict rather than re-reading the file, so provider/mode switches are consistent for the whole process lifetime.</li>
         <li>Three independent datastores, each doing one job: <b>Qdrant</b> (code meaning + long-term facts), <b>Redis</b> (answer cache), <b>SQLite</b> (conversation history + task state) &mdash; all local, all optional to varying degrees except Qdrant.</li>
       </ul>
@@ -928,7 +928,7 @@ flowchart TD
       </tbody></table></div>
 
       <h4 class="micro">If this ever became a hosted, multi-user product</h4>
-      <p style="max-width:72ch">The FastAPI dashboard already built (Phase 8) is the front door for this &mdash; but three assumptions from the single-user design would need to change first:</p>
+      <p style="max-width:72ch">A hosted HTTP front end (a FastAPI dashboard was built as Phase 8, then removed for reliability reasons) would be the front door for this &mdash; but three assumptions from the single-user design would need to change first, on top of rebuilding that front end properly:</p>
       <ul class="pt tight">
         <li><b>SQLite &rarr; Postgres for task/session state.</b> WAL mode is genuinely fine for one writer + concurrent readers on one machine; it doesn't help once multiple app instances need to see the same task queue across a network.</li>
         <li><b>Separate the API process from <code class="inline">/plan</code> execution.</b> A long-running task shouldn't block a request/response HTTP cycle &mdash; move task execution to a background worker process, with the API only enqueuing and polling status.</li>

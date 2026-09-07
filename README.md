@@ -18,8 +18,9 @@ What's here:
 - **Tasks** (`tasks/`) — a `/plan <goal>` planner/executor with approval and recovery steps.
 - **Cache** (`cache/`) — Redis-backed semantic cache for `/ask` answers; degrades to "disabled" instead of crashing if Redis isn't running.
 - **Skills** (`skills/`) — a skill registry loaded as agent tools.
-- File watcher (`context/indexers/watcher.py`) — re-invalidates the semantic cache when the codebase changes. **Known gap:** hardcoded to Chroma's per-file update functions regardless of `vector_store.provider` — with this project's Qdrant default, file changes don't actually reach the live index; only a full re-index (`/reindex`, or the dashboard's "Re-index now") does. Left as-is and documented rather than silently patched — see `docs/progress.md`.
-- **Dashboard** (`claude_agent_lab/api/`, `frontend/`) — a FastAPI backend and React/Vite frontend over the same CLI backend: indexing status, `/ask` with its sources, and a live streamed view of the agent's tool calls. See `docs/prd.md`'s Phase 8 detail.
+- File watcher (`context/indexers/watcher.py`) — re-invalidates the semantic cache when the codebase changes. **Known gap:** hardcoded to Chroma's per-file update functions regardless of `vector_store.provider` — with this project's Qdrant default, file changes don't actually reach the live index; only a full re-index (`/reindex`) does. Left as-is and documented rather than silently patched — see `docs/progress.md`.
+
+**Not here:** a Phase 8 dashboard (FastAPI backend + React/Vite frontend) was built at one point and has since been removed — it never reached the reliability bar the rest of this project holds itself to, and added a second UI surface for something the CLI already covers. The REPL (`main.py`) is the only interface. See `docs/progress.md`'s Phase 8 entry for the original build writeup, kept as history.
 
 ## System design walkthrough
 
@@ -48,6 +49,53 @@ flowchart TB
     CACHE --> REDIS[("Redis + RediSearch\nHNSW / cosine")]
     TASKS --> TDB[("SQLite: tasks.db\nWAL mode")]
     STM --> MDB[("SQLite: memory.db")]
+```
+
+A second diagram — one `/ask`, end to end (the ReAct reasoning ↔ tool-call loop, with the semantic cache short-circuiting it on a hit):
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant REPL as main.py
+    participant Orc as orchestrator.handle_query
+    participant Cache as Semantic cache (Redis)
+    participant Agent as LangGraph agent
+    participant LLM
+    participant RAG as search_codebase
+
+    User->>REPL: /ask "how does the config system work?"
+    REPL->>Orc: handle_query(agent, question, thread_id)
+    Orc->>Cache: get(question, domain, model)
+    alt cache hit (similarity ≥ 0.85)
+        Cache-->>Orc: cached answer
+        Orc-->>User: answer (no LLM call at all)
+    else cache miss
+        Orc->>Agent: ainvoke({messages:[question]}, thread_id)
+        Agent->>LLM: reasoning turn
+        LLM-->>Agent: tool call: search_codebase / recall / read_file / MCP tool
+        Agent->>RAG: run tool
+        RAG-->>Agent: ranked chunks with citations
+        Agent->>LLM: next turn, with tool results
+        LLM-->>Agent: final answer
+        Agent-->>Orc: last message content
+        Orc->>Cache: put(question, answer, ttl)
+        Orc-->>User: answer
+    end
+```
+
+A third — how the index actually stays fresh, and the one real gap in that story (marked in red):
+
+```mermaid
+flowchart LR
+    A["App startup"] -->|"collection already has points?"| A2{Skip full reindex}
+    B["/reindex command"] --> IDXR["Full reindex"]
+    C["File watcher\n(watchdog, 1.5s debounce)"] -->|"per-file upsert/delete"| G{"vector_store.provider\n== qdrant?"}
+    G -->|"no (chroma)"| WORKS["Index updated ✓"]
+    G -->|"yes — this project's default"| BROKEN["Gap: hardcoded to Chroma's\nper-file functions — no-op"]
+    D["/plan finishes"] --> IDXR2["Explicit full reindex\n(provider-agnostic)"]
+
+    style BROKEN fill:#a8402c14,stroke:#a8402c,stroke-width:1.5px
+    style WORKS fill:#2c7a6716,stroke:#2c7a67,stroke-width:1.5px
 ```
 
 ## Getting Started
@@ -123,22 +171,6 @@ The agent decides when to use it — two tools, same pattern as `search_codebase
 `memory/long_term.py` is what adds cross-session recall (see `docs/progress.md` for
 the design decisions and why this wasn't automatic-injection-on-every-turn instead).
 
-### Dashboard (Phase 8)
-
-The same backend, over HTTP, with a React frontend on top:
-
-```bash
-# with Qdrant already running and .env configured (see above)
-uvicorn claude_agent_lab.api.app:app --port 8000
-
-# in a second terminal
-cd frontend
-npm install
-npm run dev
-```
-
-Open the printed Vite URL (usually `http://localhost:5173`). See `frontend/README.md` for details.
-
 ## Bugs found and fixed during development
 
 Real bugs found and fixed by actually running the system, not hypothetical:
@@ -163,7 +195,7 @@ See `docs/progress.md` for the full writeup, including what was *not* changed an
 | 5 | MCP tool integration | Built, verified (GitHub + filesystem servers, 40 tools) |
 | 6 | Agentic task planner | Built |
 | 7 | Production concerns (cache, watcher, skills) | Built |
-| 8 | Dashboard UI (FastAPI + React) | Built, verified end-to-end (real Qdrant, real MCP servers, real retrieval quality) |
+| 8 | Dashboard UI (FastAPI + React) | Built, then removed — added a second UI surface that didn't hold up; the REPL stays the only interface |
 
 Full detail: `docs/prd.md`.
 
@@ -173,7 +205,6 @@ Full detail: `docs/prd.md`.
 claude_agent_lab/              ← repo
 ├── claude_agent_lab/           ← the package
 │   ├── agent/                  ← LangChain/LangGraph agent factory + orchestrator
-│   ├── api/                    ← FastAPI app + routes (Phase 8)
 │   ├── cache/                  ← Redis-backed semantic cache
 │   ├── context/
 │   │   ├── indexers/           ← tree-sitter chunking, semantic/hybrid indexers, file watcher
@@ -188,7 +219,6 @@ claude_agent_lab/              ← repo
 │   ├── config.py / config.yaml
 │   ├── mcp_servers.json
 │   └── main.py
-├── frontend/                    ← React + Vite dashboard (Phase 8)
 ├── docs/
 │   ├── prd.md
 │   ├── progress.md

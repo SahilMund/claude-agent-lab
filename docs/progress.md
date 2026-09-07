@@ -180,6 +180,8 @@ Question-only — meant as prompts to answer out loud or in writing, not a Q&A k
 
 ## Phase 8 — Dashboard (FastAPI + React), verified end-to-end
 
+> **Removed (2026-09-08).** The dashboard (`claude_agent_lab/api/` + `frontend/`) was deleted from the repo — it wasn't working reliably and wasn't worth carrying as a second UI surface for something the CLI already does. `fastapi`, `uvicorn`, and `sse-starlette` were dropped from `pyproject.toml`; the CLI (`main.py`) is the only interface now. Everything below is kept as a historical record of what was built and how — it no longer describes current behavior. See `docs/prd.md`'s Phase 8 entry for the up-to-date status.
+
 **Branch:** `phase-8-frontend` (off `dev`)
 **Date:** 2026-09-07
 

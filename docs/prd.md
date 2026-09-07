@@ -14,7 +14,7 @@ This is a learning project first, a portfolio artifact second.
 
 The reference project is a CLI tool ("Educosys Claude" in the original) that lets a user run `/ask <question>` against an indexed codebase and get RAG-grounded answers, with additional capabilities: semantic caching, session memory, MCP-based tool access (GitHub, filesystem), and an agentic task planner that can decompose and execute multi-step goals (`/plan <goal>`) with an approval/recovery loop.
 
-**How this repo is actually built (the process, not just the goal):** find the relevant portion of the source codebase for a phase, port it in with the renaming mapping below applied, fix whatever's broken (dependency rot, config bugs, Python-version incompatibilities), and enhance where it clearly helps. Independent design happens only where the source has no equivalent (Phase 8's frontend). See `CLAUDE.md` for the full process.
+**How this repo is actually built (the process, not just the goal):** find the relevant portion of the source codebase for a phase, port it in with the renaming mapping below applied, fix whatever's broken (dependency rot, config bugs, Python-version incompatibilities), and enhance where it clearly helps. Independent design happens only where the source has no equivalent (Phase 8's dashboard, later removed — see below). See `CLAUDE.md` for the full process.
 
 **Renaming applied throughout** (package `educosys_claude` → `claude_agent_lab`; full table in `CLAUDE.md`) — no upstream branding carried into this repo.
 
@@ -37,9 +37,11 @@ Each row is a directory that already exists in the source reference — porting 
 | **5** | `phase-5-mcp` | MCP tool integration | `mcp/`, `mcp_servers.json` (renamed per mapping) | Ported, verified (GitHub + filesystem servers, 40 tools loaded) |
 | **6** | `phase-6-task-planning` | Agentic task planner | `tasks/` | Ported |
 | **7** | `phase-7-production` | Production-grade concerns | `cache/`, `skills/`, `context/indexers/watcher.py` | Ported |
-| **8** | `phase-8-frontend` | Dashboard UI over the existing backend | *(no source equivalent — new work)* | Built, verified end-to-end |
+| **8** | `phase-8-frontend` | Dashboard UI over the existing backend | *(no source equivalent — new work)* | Built, then removed — see below |
 
-**Phase 8 detail** (the one phase with no source to port from): a FastAPI service (`api/app.py`, `api/routes.py`) exposing indexing, `/ask` retrieval, and the agent's tool-use loop over HTTP (streaming for the agent's live trace), plus a React + Vite SPA (`frontend/`) with three views — indexing status, an ask view showing the answer plus its retrieved sources, and an agent view showing the tool-call trace live. Additive to the CLI, not a replacement for it — the REPL stays the primary interface.
+**Phase 8 detail** (the one phase with no source to port from): a FastAPI service (`api/app.py`, `api/routes.py`) exposing indexing, `/ask` retrieval, and the agent's tool-use loop over HTTP (streaming for the agent's live trace), plus a React + Vite SPA (`frontend/`) with three views — indexing status, an ask view showing the answer plus its retrieved sources, and an agent view showing the tool-call trace live. Additive to the CLI, not a replacement for it — the REPL stayed the primary interface.
+
+**Phase 8 was removed.** The dashboard never reached the reliability bar the rest of this project holds itself to and added a second UI surface (`api/` + `frontend/`, a Node toolchain, a FastAPI dependency) for a capability the REPL already covers. Both `claude_agent_lab/api/` and `frontend/` were deleted; `fastapi`, `uvicorn`, and `sse-starlette` were dropped from `pyproject.toml`. The CLI (`main.py`) remains the only interface. See `docs/progress.md`'s Phase 8 entry for the original build writeup — kept as history, not as documentation of current behavior.
 
 Each phase branches off the previous phase's branch (stacked), gets its own PR, and updates the running phase documentation (`docs/progress.md`: what was ported / what broke and how it was fixed / architecture notes / HLD / LLD / interview questions).
 
@@ -55,5 +57,5 @@ Each phase branches off the previous phase's branch (stacked), gets its own PR, 
 
 - `mcp_demo/` reference script (superseded, not carried forward)
 - Production deployment/hosting concerns beyond what's covered in Phase 7
-- Multi-tenancy / auth (not present in the reference project either; Phase 8's dashboard is single-user, run-it-yourself, same as the CLI)
-- Phase 8's frontend replacing or deprecating the CLI — the REPL stays the primary, always-supported interface
+- Multi-tenancy / auth (not present in the reference project either)
+- A dashboard/HTTP UI over the CLI — attempted once as Phase 8, removed; the REPL stays the primary, only interface

@@ -7,7 +7,7 @@ conversation: a fact saved in one session is retrievable in every future one.
 There is no equivalent of this in source/capstone_project/educosys_claude/
 memory/ — it only has session.py and short_term.py. This is new design, not
 a port, per CLAUDE.md's rule that work absent from source entirely is where
-independent design belongs (same category as Phase 8's frontend).
+independent design belongs (same category as the now-removed Phase 8 dashboard).
 
 Storage: a Qdrant collection separate from the code index collection
 (config's qdrant.collection_name), using the same embedder as the rest of
