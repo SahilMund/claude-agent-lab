@@ -19,8 +19,13 @@ def index_codebase(repo_path: str) -> QdrantVectorStore:
    """
    embedder = get_embedder()
    collection_name = config["qdrant"]["collection_name"]
-   url = os.getenv("QDRANT_URL")
-   api_key = os.getenv("QDRANT_API_KEY")
+   # `or None`, not a bare os.getenv(): QdrantClient infers https=True whenever
+   # api_key is anything other than None — including "". A blank QDRANT_API_KEY=
+   # line in .env (the common case for a local Qdrant with no auth) makes
+   # os.getenv() return "", which silently switches the client to HTTPS against
+   # a plain-HTTP local server and fails with an opaque SSL error.
+   url = os.getenv("QDRANT_URL") or None
+   api_key = os.getenv("QDRANT_API_KEY") or None
 
 
    # Check if collection already has data
