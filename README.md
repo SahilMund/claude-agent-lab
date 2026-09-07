@@ -13,7 +13,7 @@ What's here:
 - **LLM/embeddings** (`llm/factory.py`) — LangChain-based, provider chosen by `config.yaml`'s `llm.provider`, no code change needed to switch: `anthropic` (default — the source defaults to OpenAI), `openai`, `gemini`, `groq`, or `ollama` (local, no API key). `HuggingFaceEmbeddings` for embeddings (runs locally, no API key — the source defaults to OpenAI embeddings, which would need a second API key for no real reason here).
 - **Indexing & retrieval** (`context/indexers/`, `context/retrievers/`) — tree-sitter-based code-aware chunking (15 languages), semantic (Chroma or Qdrant) or hybrid (Qdrant native sparse+dense) retrieval, chosen via `config.yaml`. Default: Qdrant + hybrid.
 - **Agent** (`agent/`) — LangChain's `create_agent` + LangGraph checkpointer-backed memory, with a `search_codebase` tool, filesystem tools (`tools/filesystem_tools.py`), a terminal tool (`tools/terminal_tools.py`), MCP tools (GitHub + filesystem servers), and skill-as-tool loading.
-- **Memory** (`memory/`) — session tracking (which conversation thread is "current") plus a SQLite-backed LangGraph checkpointer with automatic summarization once a conversation gets long.
+- **Memory** (`memory/`) — session tracking (which conversation thread is "current") plus a SQLite-backed LangGraph checkpointer with automatic summarization once a conversation gets long. Plus **long-term memory** (`memory/long_term.py`) — cross-session facts/preferences in a separate Qdrant collection, retrieved and saved via `recall`/`remember` agent tools. No source equivalent — see "Long-term memory" below.
 - **MCP** (`mcp/`) — connects to the servers listed in `mcp_servers.json` (GitHub, filesystem, by default).
 - **Tasks** (`tasks/`) — a `/plan <goal>` planner/executor with approval and recovery steps.
 - **Cache** (`cache/`) — Redis-backed semantic cache for `/ask` answers; degrades to "disabled" instead of crashing if Redis isn't running.
@@ -77,6 +77,23 @@ from its own env var — see `.env.example`. Only the branches for `anthropic` a
 came from the source; `gemini`, `groq`, and `ollama` are an enhancement on top of the same
 factory pattern (see `docs/progress.md`).
 
+### Long-term memory
+
+Separate from a session's own conversation history (`/new_session` wipes that, per-thread),
+the agent can save durable facts/preferences that persist across every future session — a
+coding-style preference, a project convention, a correction. Stored in their own Qdrant
+collection (`long_term_memory.collection_name` in `config.yaml`, default
+`claude_agent_lab_memory`), retrieved by semantic similarity, not exact match.
+
+The agent decides when to use it — two tools, same pattern as `search_codebase`:
+- **`remember(fact, category)`** — called when you state something durable ("I prefer early
+  returns over nested if/else").
+- **`recall(query)`** — called before answering, if a past preference might be relevant.
+
+No equivalent of this exists in the source reference — `memory/session.py` and
+`memory/short_term.py` are ports, `memory/long_term.py` is new (see `docs/progress.md` for
+the design decisions and why this wasn't automatic-injection-on-every-turn instead).
+
 ### Dashboard (Phase 8)
 
 The same backend, over HTTP, with a React frontend on top:
@@ -134,7 +151,7 @@ claude_agent_lab/              ← repo
 │   │   └── retrievers/         ← semantic/hybrid retrieval
 │   ├── llm/                    ← LangChain LLM/embedder factory
 │   ├── mcp/                    ← MCP client + config
-│   ├── memory/                 ← session tracking, LangGraph checkpointer
+│   ├── memory/                 ← session tracking, LangGraph checkpointer, long-term memory
 │   ├── observability/          ← logging
 │   ├── skills/                 ← skill registry + skill-as-tool loading
 │   ├── tasks/                  ← planner/executor/approval/recovery
