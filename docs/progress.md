@@ -175,3 +175,55 @@ Question-only — meant as prompts to answer out loud or in writing, not a Q&A k
 33. What's the risk of silently fixing a bug found during a port without documenting it, versus writing it up the way this entry does?
 34. Which of this session's four fixes were forced (the code literally wouldn't run without them) versus discretionary (the code would run, just wrongly or suboptimally)?
 35. Why does Phase 8 get built independently while Phases 1-7 were ported — what's the actual distinguishing criterion?
+
+---
+
+## Phase 1 enhancement — multi-provider LLM support (Gemini, Groq, Ollama)
+
+**Branch:** `phase-1-multi-llm-provider` (off `dev`)
+**Date:** 2026-09-07
+
+### In plain terms
+
+`llm/factory.py::get_llm()` already had the shape for this — a `provider` string in config picks which LangChain chat class to build. The source only used that shape for two providers (`anthropic`, `openai`, the second one really just "everything else falls through to here"). This session adds three more branches to the exact same pattern: Gemini, Groq, and Ollama (a local model server — no API key at all). Switching between any of the five is a one-line `config.yaml` edit, same as it always was for the original two.
+
+This is an enhancement on top of ported code, not new architecture — `CLAUDE.md`'s own process explicitly calls this kind of thing out as encouraged, distinct from inventing a module the source has no equivalent of at all (that's Phase 8).
+
+### What changed
+
+- **`llm/factory.py`** — `get_llm()` gained three more `if provider == ...` branches (`gemini` → `ChatGoogleGenerativeAI`, `groq` → `ChatGroq`, `ollama` → `ChatOllama`), before the existing `anthropic` branch and the existing openai fallback — same shape, same fallback-to-openai behavior for anything unrecognized.
+- **`pyproject.toml`** — added `langchain-google-genai`, `langchain-groq`, `langchain-ollama`.
+- **`config.yaml`** — documented the five accepted `llm.provider` values in a comment.
+- **`.env.example`** — added `GOOGLE_API_KEY`, `GROQ_API_KEY`, `OLLAMA_BASE_URL` (optional — only needed if Ollama isn't at the default `http://localhost:11434`).
+- **`README.md`** — new "Switching LLM providers" section.
+
+### Verified before writing any of it
+
+`ChatGroq`'s constructor field is `model_name`, **not** `model` — every other provider here (`ChatAnthropic`, `ChatOpenAI`, `ChatGoogleGenerativeAI`, `ChatOllama`) uses `model`. Caught by checking each class's actual pydantic `model_fields` before writing the branch, not by assuming the pattern held across all five. Getting this one wrong would have produced a silent `TypeError` (or worse, a class that happily accepted an unused `model` kwarg and then failed with a confusing "no model configured" error at request time) only visible the first time someone actually tried Groq.
+
+Also verified, not assumed:
+- Each provider's API-key field (`google_api_key`, `groq_api_key`) has `default_factory=get_secret_from_env`, confirming they auto-read `GOOGLE_API_KEY`/`GROQ_API_KEY` from the environment the same way `ChatAnthropic`/`ChatOpenAI` already do — not guessed from "well, the others work that way."
+- All five branches actually construct (`get_llm()` called once per provider, with fake keys, asserting the right class comes back).
+- A non-Anthropic provider (`gemini`) works through the *entire* existing pipeline unmodified — `create_agent(get_llm(), tools=[...], ...)` compiles successfully with a Gemini backend. This is the real claim being made ("swap providers by config, nothing else changes") and it was checked end to end, not just at the factory-function level.
+
+### Architecture decision
+
+**Extend the existing provider-branch pattern, rather than introduce a provider-registry abstraction**
+- *In plain terms:* Five `if` branches instead of, say, a dict of provider-name → constructor-function that could be extended by adding a dict entry instead of an `if`.
+- *Problem:* `get_llm()` needs to pick between five providers now instead of two.
+- *Options considered:* keep the `if`/`elif` chain the source already used, just with more branches; refactor into a provider registry (dict-of-factories) that's arguably more "extensible."
+- *What was chosen:* keep the `if` chain.
+- *Tradeoff:* A registry would scale slightly better past five providers and let a caller register a custom provider without editing this file. Rejected here specifically because of the process this repo follows: the source's own shape is the `if` chain, and refactoring it into a different pattern *while* adding providers would blur "port + fix + enhance" into "port + redesign" — exactly the distinction `CLAUDE.md` draws a line around. Five explicit branches is also just easier to read top-to-bottom for a project whose whole point is understanding every subsystem, not optimizing for a tenth provider that may never get added.
+
+### Interview questions
+
+1. Why does `ChatGroq` use `model_name` while every other provider here uses `model` — and what would go wrong if the Groq branch used `model` by mistake, matching the others?
+2. How was it confirmed that `ChatGoogleGenerativeAI` and `ChatGroq` read their API keys from `GOOGLE_API_KEY`/`GROQ_API_KEY` automatically, rather than assumed from the pattern the other two providers follow?
+3. Why does the Ollama branch check for an optional `OLLAMA_BASE_URL` env var instead of always passing `base_url` explicitly?
+4. What's actually being claimed by "switching providers is a config-only change," and what test would falsify that claim if it were false?
+5. Why did the new branches get inserted before the existing `anthropic` branch and openai fallback, rather than after?
+6. What would happen today if `llm.provider` were set to `"claude"` instead of `"anthropic"` — is that a config bug a user would hit, and where would it surface?
+7. Why was a provider-registry (dict-of-factories) rejected here even though it would scale better to a sixth or seventh provider?
+8. What does verifying `create_agent(get_llm(), ...)` compiles with a Gemini backend actually prove that testing `get_llm()` alone doesn't?
+9. If Ollama's local server isn't running, at what point does that failure actually surface — at `get_llm()` construction, or later?
+10. What's the blast radius of adding a sixth provider (say, Mistral) — which files change, and does anything about this session's design make that easier or harder than it would otherwise be?
