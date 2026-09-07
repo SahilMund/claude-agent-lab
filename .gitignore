@@ -1,0 +1,24 @@
+# Local-only files — not pushed to GitHub
+docs/PROMPTS.md
+.claude/settings.json
+CLAUDE.md
+
+# Secrets — never commit
+.env
+
+# Local runtime data (memory db, tasks db, skills dir, chromadb — all live
+# under .agent_lab/ per config.yaml)
+.agent_lab/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Poetry
+poetry.lock
+
+# Virtual environments
+.venv/
+venv/
