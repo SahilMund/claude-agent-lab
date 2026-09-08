@@ -559,6 +559,28 @@ sequenceDiagram
         <li>The system prompt is a direct policy, not a suggestion: <em>"Always use the <code class="inline">search_codebase</code> tool before answering any question"</em> &mdash; grounding is enforced by instruction, not left to the model's discretion.</li>
         <li>The cache check happens <em>before</em> the agent is touched at all &mdash; a hit means zero tool calls, zero LLM calls, zero retrieval.</li>
       </ul>
+      <h4 class="micro">The LLM call itself &mdash; input and output shape, and why</h4>
+      <p class="sec-dek" style="margin-bottom:8px;">"Reasoning turn" in the diagram above is one HTTP call to the provider's chat-completions endpoint. Same input/output shape on every one of those calls, whichever provider <code class="inline">llm/factory.py</code> picked.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th></th><th>What</th><th>Why this shape</th></tr></thead>
+        <tbody>
+          <tr><td><b>Input</b></td><td>
+            <ul class="pt tight" style="margin:0;">
+              <li><b>System message</b> &mdash; <code class="inline">SYSTEM_PROMPT</code> + skills prompt, one string, sent once per call (not re-derived each turn).</li>
+              <li><b>Message history</b> &mdash; the ordered list from the checkpointer's <code class="inline">messages</code> channel: <code class="inline">HumanMessage</code> (user turns), <code class="inline">AIMessage</code> (past reasoning + tool calls), <code class="inline">ToolMessage</code> (past tool results) &mdash; summarized/trimmed per Section 8's STM card once it crosses 4,000 tokens.</li>
+              <li><b>Tool schemas</b> &mdash; every <code class="inline">@tool</code>-decorated function's name, docstring, and typed args, converted to JSON Schema and bound to the model (<code class="inline">create_agent</code> calls the provider's own <code class="inline">bind_tools</code>). This is how the model "knows" <code class="inline">search_codebase(query: str)</code> exists at all.</li>
+            </ul>
+          </td><td>Nothing here is a special "memory" input &mdash; STM enters as ordinary messages already in the list; LTM enters only if <code class="inline">recall</code> was called on a previous turn, as a <code class="inline">ToolMessage</code> like any other tool result. One list, one shape, easier to reason about than a system with several distinct injection channels.</td></tr>
+          <tr><td><b>Output</b></td><td>
+            One <code class="inline">AIMessage</code> per call, one of two shapes:
+            <ul class="pt tight" style="margin:0;">
+              <li><b>Tool-call turn:</b> <code class="inline">.tool_calls</code> populated &mdash; a list of <code class="inline">{name, args, id}</code>, where <code class="inline">args</code> is JSON already parsed and validated against that tool's schema.</li>
+              <li><b>Final turn:</b> <code class="inline">.tool_calls</code> empty, <code class="inline">.content</code> is the plain-text answer &mdash; the graph's exit condition for the loop.</li>
+            </ul>
+          </td><td>Structured <code class="inline">tool_calls</code> (native function-calling on the provider side) beats asking the model to emit an ad-hoc string like <code class="inline">"ACTION: search_codebase(query=...)"</code> and regex-parsing it &mdash; the provider guarantees the JSON matches the declared schema instead of this app having to defensively parse free text. It's also what makes the five-provider swap in Section 4 a config-only change: LangChain normalizes each provider's own function-calling wire format to this same <code class="inline">AIMessage.tool_calls</code> shape, so nothing downstream of <code class="inline">get_llm()</code> needs to know which provider actually answered.</td></tr>
+        </tbody>
+      </table></div>
+
       <div class="callout"><span class="icon">Name it</span><p>That reasoning &harr; tool-call loop is the textbook <b>ReAct</b> pattern (Reason, Act, Observe, repeat) &mdash; and the <code class="inline">/ask</code> vs. <code class="inline">/plan</code> split one level up in <code class="inline">main.py</code> is <b>Routing</b>, just a deterministic command-prefix router rather than a learned/LLM classifier. Both get their full lineup of names in Section 13.</p></div>
     </section>
 
@@ -587,6 +609,35 @@ sequenceDiagram
           </ul>
         </div>
       </div>
+
+      <h4 class="micro">STM schema &mdash; langgraph's own SQLite tables, not this project's design</h4>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th class="mono">checkpoints</th><th>Column</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="7"></td><td class="mono">thread_id, checkpoint_ns, checkpoint_id <b>(PK)</b></td><td>One row per graph snapshot. <code class="inline">checkpoint_ns</code> (usually empty here) exists so multiple sub-graphs can checkpoint independently under the same <code class="inline">thread_id</code> without colliding &mdash; this app doesn't use sub-graphs, but the schema still pays that column's cost.</td></tr>
+          <tr><td class="mono">parent_checkpoint_id</td><td>Turns the table into a linked list per thread &mdash; how <code class="inline">/switch &lt;id&gt;</code> can resume from the latest checkpoint and how time-travel/rollback (not exposed by this app's CLI, but supported by langgraph) would replay from an earlier one.</td></tr>
+          <tr><td class="mono">checkpoint <b>BLOB</b></td><td>The serialized graph state &mdash; the full message list (<code class="inline">HumanMessage</code>/<code class="inline">AIMessage</code>/<code class="inline">ToolMessage</code> objects), not just plain text. BLOB, not a JSON column, because these are real Python/LangChain objects serialized with langgraph's own (msgpack-based) serializer &mdash; a plain JSON column would need every message type to be JSON-safe on its own.</td></tr>
+          <tr><td class="mono">metadata <b>BLOB</b></td><td>Step metadata (which node ran, write source) &mdash; kept separate from <code class="inline">checkpoint</code> so langgraph can inspect/filter run history without deserializing the (larger) state blob.</td></tr>
+        </tbody>
+        <thead><tr><th class="mono">writes</th><th>Column</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="2"></td><td class="mono">thread_id, checkpoint_ns, checkpoint_id, task_id, idx <b>(PK)</b></td><td>Pending writes for one in-flight super-step, keyed down to the individual channel write (<code class="inline">idx</code>) &mdash; kept in their own table instead of the <code class="inline">checkpoints</code> row so a crash mid-step can be recovered from these partial writes instead of re-running the whole step.</td></tr>
+          <tr><td class="mono">channel, type, value <b>BLOB</b></td><td>Which state channel this write targets (e.g. <code class="inline">messages</code>) and the serialized value &mdash; same BLOB reasoning as above.</td></tr>
+        </tbody>
+      </table></div>
+      <p style="font-size:12.5px; color:var(--ink-faint); max-width:70ch;">Not this project's schema to design &mdash; <code class="inline">AsyncSqliteSaver.setup()</code> creates both tables. Worth knowing them anyway: an interviewer asking "how would you store conversation history" is really asking whether you understand this shape, whichever library ends up owning it.</p>
+
+      <h4 class="micro">LTM schema &mdash; this project's own Qdrant collection (<code class="inline">claude_agent_lab_memory</code>)</h4>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Field</th><th>Type</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">id</td><td class="mono">uuid4 string</td><td>Randomly generated per <code class="inline">remember()</code> call, not a content hash &mdash; two calls saving the same fact twice create two points, not an upsert. That's the known gap named in the card above (no de-dup): a real design choice would hash the fact text so a repeated <code class="inline">remember</code> updates <code class="inline">created_at</code> in place instead of duplicating; this project didn't build that.</td></tr>
+          <tr><td class="mono">vector</td><td class="mono">float[dims], cosine</td><td><code class="inline">dims</code> comes from <code class="inline">config["embeddings"]["dims"]</code> &mdash; the same embedder as the code index, just a different collection, so switching the embedding model is still a one-place config change.</td></tr>
+          <tr><td class="mono">payload.page_content</td><td class="mono">str</td><td>The raw fact text itself &mdash; this is what got embedded into <code class="inline">vector</code>, and what <code class="inline">recall()</code> returns as <code class="inline">fact</code>. Key name (<code class="inline">page_content</code>) is <code class="inline">langchain_qdrant</code>'s own default, not chosen by this project.</td></tr>
+          <tr><td class="mono">payload.metadata.category</td><td class="mono">str</td><td>Free-text label (<code class="inline">"style"</code>, <code class="inline">"convention"</code>, ...) the model picks when it calls <code class="inline">remember</code>. Stored as plain payload, <em>not</em> a Qdrant filter index &mdash; <code class="inline">recall()</code> does pure semantic search with no category filter, so today this field is for a human reading recalled facts, not for narrowing the query. A real extension point: index it and let <code class="inline">recall</code> take an optional category filter.</td></tr>
+          <tr><td class="mono">payload.metadata.created_at</td><td class="mono">ISO-8601 UTC</td><td>Recorded for display/debugging only &mdash; unlike the semantic cache's Redis TTL (Section 9), nothing here expires or decays a fact automatically.</td></tr>
+        </tbody>
+      </table></div>
 
       <pre class="mermaid">
 sequenceDiagram
