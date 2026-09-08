@@ -1,3 +1,8 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Claude Agent Lab</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
@@ -225,6 +230,8 @@
   ::-webkit-scrollbar-thumb{background:var(--line-strong); border-radius:6px;}
   @media (prefers-reduced-motion: reduce){ *{transition:none !important;} }
 </style>
+</head>
+<body>
 
 <div class="shell">
   <nav class="toc" id="tocNav">
@@ -1032,6 +1039,21 @@ flowchart TD
 
 <div id="diagBackdrop"></div>
 
+<!-- This doc is a plain static HTML file (opened directly in a browser or
+     IDE preview) — not rendered inside an environment with a built-in
+     mermaid renderer, so the library has to be loaded and run explicitly
+     here, unlike a `pre.mermaid` block dropped into a host that already
+     knows how to render mermaid on its own. -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    securityLevel: 'loose',
+    theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default',
+    fontFamily: 'IBM Plex Mono, ui-monospace, monospace'
+  });
+</script>
+
 <script>
 (function(){
   // ---------- diagram expand-in-place ----------
@@ -1152,3 +1174,5 @@ flowchart TD
   });
 })();
 </script>
+</body>
+</html>
