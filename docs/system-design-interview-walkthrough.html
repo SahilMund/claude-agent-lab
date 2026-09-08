@@ -467,6 +467,10 @@ flowchart TB
         </ul>
       </div>
 
+      <div class="callout"><span class="icon">Why top-k=5, not "just retrieve more"</span>
+        <p>The obvious fix for "what if the relevant chunk isn't in the top 5?" looks like raising <code class="inline">k</code>. It doesn't actually help past a point: <b>"lost in the middle"</b> (Liu et al., 2023) found LLMs attend well to information near the start or end of their context window and measurably worse to the same information buried mid-context &mdash; so stuffing in 20 loosely-relevant chunks to be safe can make the answer <em>worse</em>, not more grounded, even though strictly more correct information is technically present. This is the same underlying reason Section 8's STM bounding exists: a small, high-precision context beats a large, noisy one. Keeping <code class="inline">search_codebase</code>'s <code class="inline">k</code> small (5) is a deliberate bet that a good retriever ranking well matters more than a large net.</p>
+      </div>
+
       <details class="deep">
         <summary><b>If I had to switch this project to grep-only</b> &mdash; what actually changes</summary>
         <div class="deep-body">
@@ -601,7 +605,7 @@ sequenceDiagram
           <ul>
             <li><b>What:</b> the full message history of one conversation, keyed by <code class="inline">thread_id</code>.</li>
             <li><b>Where:</b> LangGraph's <code class="inline">AsyncSqliteSaver</code> &rarr; <code class="inline">.agent_lab/memory/memory.db</code>. Which thread is "current" is a separate one-line text file, <code class="inline">.agent_lab/memory/current_session</code>.</li>
-            <li><b>Bounded automatically:</b> past 4,000 tokens, <code class="inline">SummarizationMiddleware</code> compresses older turns and keeps the last 20 messages verbatim &mdash; a long session never blows the context window.</li>
+            <li><b>Bounded automatically:</b> past 4,000 tokens, <code class="inline">SummarizationMiddleware</code> compresses older turns and keeps the last 20 messages verbatim &mdash; a long session never blows the context window, and (see the callout below) never buries early turns in the middle of a huge one either.</li>
             <li><b>Scope:</b> per-thread only. <code class="inline">/new_session</code> starts a fresh, empty thread; <code class="inline">/switch &lt;id&gt;</code> resumes an old one &mdash; nothing is deleted, just not currently active.</li>
             <li><b>Used for:</b> "what did I just ask", multi-turn follow-ups &mdash; never crosses a session boundary on its own.</li>
           </ul>
@@ -615,6 +619,10 @@ sequenceDiagram
             <li><b>Known gap:</b> no de-duplication, no expiry/forgetting &mdash; unlike the semantic cache's TTL, a contradicted fact just sits alongside the new one.</li>
           </ul>
         </div>
+      </div>
+
+      <div class="callout"><span class="icon">Same reason as Section 4's top-k</span>
+        <p>Summarizing older turns instead of just letting the raw message list grow is the same bet as capping retrieval at <code class="inline">k=5</code>: <b>"lost in the middle"</b> means a long, unsummarized history doesn't just cost more tokens &mdash; the model gets measurably worse at using turn #3 out of 80 once turns #4&ndash;79 sit between it and the current question. Compressing old turns into a summary keeps what's actually relevant near the edges of the context window (recent messages, or a compact summary near the system prompt) instead of scattered through a wall of verbatim history the model attends to unevenly.</p>
       </div>
 
       <h4 class="micro">STM schema &mdash; langgraph's own SQLite tables, not this project's design</h4>
