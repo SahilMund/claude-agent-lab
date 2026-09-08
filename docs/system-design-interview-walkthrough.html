@@ -452,7 +452,7 @@ flowchart TB
       <ul class="pt tight">
         <li>Pre-process once: chunk the codebase into meaningful units (function/class/block), embed each chunk, store in a vector index.</li>
         <li>At query time: embed the question, do one similarity search, hand the top-k chunks to the LLM as grounding &mdash; one retrieval step instead of many tool round-trips.</li>
-        <li>As publicly described, <b>Cursor</b> AST-chunks code and embeds it into a dedicated vector search engine, retrieved via semantic similarity. <b>GitHub Copilot</b> historically leaned on local context (current file + "neighboring tabs" similarity) for inline completions, with a pre-built semantic index added for chat/workspace-aware features.</li>
+        <li>Chosen here for this project's own reasons (the "Why RAG here" callout below) &mdash; not built to imitate any one product. It's still worth knowing which real tools land on the same side of this fork, and why: as publicly described, <b>Cursor</b> AST-chunks code and embeds it into a dedicated vector search engine, retrieved via semantic similarity. <b>GitHub Copilot</b> historically leaned on local context (current file + "neighboring tabs" similarity) for inline completions, with a pre-built semantic index added for chat/workspace-aware features.</li>
       </ul>
 
       <div class="tbl-wrap"><table>
@@ -464,7 +464,7 @@ flowchart TB
           <tr><td class="mono">Design bet</td><td>The model itself, given the right tools, is the real constraint</td><td>Investing in retrieval infra gets better context to the model faster</td><td>Speed of surfacing context matters more than perfect precision</td></tr>
         </tbody>
       </table></div>
-      <p style="font-size:12.5px; color:var(--ink-faint); max-width:70ch;">As publicly described by each team / product documentation as of 2026 &mdash; not derived from access to any of these codebases. Worth stating plainly in an interview: this is a genuine, defensible fork, not a "one is right" situation &mdash; a rapidly-changing monorepo with many concurrent editors favours the agentic bet; a large but relatively stable codebase where per-query latency is the priority favours the index-based one.</p>
+      <p style="font-size:12.5px; color:var(--ink-faint); max-width:70ch;">As publicly described by each team / product documentation as of 2026 &mdash; not derived from access to any of these codebases, and not a claim that this project is modeled on or affiliated with any of them. Landing on the same side of a two-way architectural fork as one particular product is a coincidence of the tradeoff, not a design lineage. Worth stating plainly in an interview: this is a genuine, defensible fork, not a "one is right" situation &mdash; a rapidly-changing monorepo with many concurrent editors favours the agentic bet; a large but relatively stable codebase where per-query latency is the priority favours the index-based one.</p>
 
       <div class="tbl-wrap"><table>
         <thead><tr><th></th><th>Grep / agentic search</th><th>RAG (this project)</th></tr></thead>
