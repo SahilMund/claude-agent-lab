@@ -415,6 +415,25 @@ flowchart TB
         </tbody>
       </table></div>
       <div class="callout good"><span class="icon">Interview tell</span><p>Being able to point at a question ("where's caching handled?") and land on exactly one directory, every time, is itself a design signal &mdash; it means responsibilities weren't allowed to smear across files.</p></div>
+
+      <h4 class="micro">Key libraries, and why each one is here</h4>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Library</th><th>Used for</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">langchain</td><td><code class="inline">create_agent</code> &mdash; the tool-binding + ReAct loop that turns an LLM + a tool list into an agent (Section 7).</td></tr>
+          <tr><td class="mono">langchain-anthropic / -openai / -google-genai / -groq / -ollama</td><td>One LangChain chat-model integration per provider &mdash; <code class="inline">get_llm()</code> (Section 14) picks one based on <code class="inline">llm.provider</code>, so the rest of the app only ever talks to LangChain's common interface.</td></tr>
+          <tr><td class="mono">langchain-huggingface + sentence-transformers</td><td>Runs <code class="inline">all-MiniLM-L6-v2</code> locally for embeddings &mdash; no API key needed for indexing (Section 5).</td></tr>
+          <tr><td class="mono">langgraph + langgraph-checkpoint-sqlite</td><td>The agent's execution graph and its SQLite-backed checkpointer &mdash; STM persistence (Section 7).</td></tr>
+          <tr><td class="mono">langchain-qdrant + qdrant-client</td><td>The code index and long-term-memory vector stores, plus hybrid dense+sparse retrieval with RRF fusion (Section 5).</td></tr>
+          <tr><td class="mono">chromadb</td><td>The alternate, dense-only vector store (<code class="inline">vector_store.provider: chroma</code>) &mdash; simpler, no hybrid mode, no separate server process to run.</td></tr>
+          <tr><td class="mono">tree-sitter + tree-sitter-language-pack</td><td>AST parsing for code-aware chunking across 15 languages (Section 5). The <code class="inline">-language-pack</code> fork, not the unmaintained <code class="inline">tree-sitter-languages</code> &mdash; a real bug found while porting (README).</td></tr>
+          <tr><td class="mono">watchdog</td><td>Cross-platform filesystem event observer behind the debounced reindex watcher (Section 5).</td></tr>
+          <tr><td class="mono">langchain-mcp-adapters</td><td><code class="inline">MultiServerMCPClient</code> &mdash; connects to the GitHub/filesystem MCP servers and exposes their tools in LangChain's own tool format (Section 10).</td></tr>
+          <tr><td class="mono">redis + redisvl</td><td>The semantic response cache &mdash; RediSearch/HNSW-backed similarity lookup over past <code class="inline">/ask</code> answers (Section 9).</td></tr>
+          <tr><td class="mono">pydantic</td><td>Every structured LLM output (<code class="inline">PlannedTask</code>, <code class="inline">ExecutionPlan</code>, the judge's verdict &mdash; Section 14) is a typed model, not a loose dict parsed from free text.</td></tr>
+          <tr><td class="mono">rich</td><td>Terminal output formatting for the REPL &mdash; not a backend dependency, purely the CLI's own UX.</td></tr>
+        </tbody>
+      </table></div>
     </section>
 
     <!-- 4 -->
@@ -492,11 +511,55 @@ flowchart TB
 
       <h4 class="micro">Chunking</h4>
       <ul class="pt tight">
-        <li>Code files (15 languages &mdash; Python, JS/TS/TSX, Java, Go, Rust, C/C++, C#, Ruby, PHP, Swift, Kotlin, Bash) are parsed with <b>tree-sitter</b>; the walk stops the moment it hits a function/class/method node, so nested functions aren't double-indexed as separate chunks.</li>
-        <li>Text/config files (<code class="inline">.md</code>, <code class="inline">.yaml</code>, <code class="inline">.json</code>, ...) have no meaningful AST &mdash; chunked with a 50-line sliding window, 10-line overlap, so context isn't lost at a boundary.</li>
+        <li>Code files (15 languages &mdash; Python, JS/TS/TSX, Java, Go, Rust, C/C++, C#, Ruby, PHP, Swift, Kotlin, Bash) are parsed with <b>tree-sitter</b>; the walk stops the moment it hits a function/class/method node, so nested functions aren't double-indexed as separate chunks. There's no fixed "chunk size" here at all &mdash; a chunk is exactly whichever function/class the AST says it is, one line or two hundred.</li>
+        <li>Text/config files (<code class="inline">.md</code>, <code class="inline">.yaml</code>, <code class="inline">.json</code>, ...) have no meaningful AST &mdash; chunked with a <b>50-line sliding window, 10-line overlap</b> (<code class="inline">CHUNK_SIZE=50</code>, <code class="inline">CHUNK_OVERLAP=10</code> in <code class="inline">code_parser.py</code>), so context isn't lost at a boundary.</li>
         <li>If AST parsing finds nothing in a code file (e.g. an imports-only file), it falls back to the same sliding window &mdash; every file produces at least one chunk.</li>
-        <li>Each chunk carries real metadata: file path, name, type, start/end line &mdash; what actually lets an answer cite <code class="inline">factory.py:19-32</code> instead of a vague paraphrase.</li>
+        <li>Each chunk carries real metadata: file path, name, type, start/end line &mdash; what actually lets an answer cite <code class="inline">factory.py:19-32</code> instead of a vague paraphrase. That citation is a direct product of chunk-level metadata, not something bolted on after the fact.</li>
       </ul>
+
+      <div class="callout"><span class="icon">What "chunk size" and "overlap" actually mean, and why 50/10</span>
+        <p><b>Chunk size</b> is how many lines go into one embedded unit &mdash; too large and a chunk mixes several unrelated ideas into one vector, diluting what it actually matches on; too small and a chunk loses the surrounding context needed to make sense of it alone. <b>Chunk overlap</b> is how many trailing lines of chunk <i>N</i> are repeated as the leading lines of chunk <i>N+1</i>, so a sentence or concept that happens to fall right on a chunk boundary still appears whole in at least one chunk instead of being split in half across two chunks that individually look irrelevant.</p>
+        <p style="margin-top:8px">Concretely, with a 50-line window and 10-line overlap: <code class="inline">step = CHUNK_SIZE &minus; CHUNK_OVERLAP = 40</code>, so chunk 1 covers lines 1&ndash;50 and chunk 2 starts 40 lines later, at line <b>41</b> (lines 41&ndash;90) &mdash; the last 10 lines of chunk 1 (41&ndash;50) reappear as the first 10 lines of chunk 2. A config block that spans lines 45&ndash;55 would be split in half by a non-overlapping window &mdash; with overlap, lines 45&ndash;50 appear intact in <em>both</em> chunks, so whichever one the retriever ranks higher still contains the whole thing. 50/10 (20% overlap) is a reasonable general-purpose default for prose/config files, not a value this project tuned against a benchmark &mdash; a real next step would be measuring recall on a golden set (Section 17) at a few overlap ratios rather than assuming 20% is right for this repo's own docs.</p>
+        <p style="margin-top:8px">This tradeoff doesn't apply to code chunks at all &mdash; tree-sitter's AST boundaries <em>are</em> the semantic boundaries (a function is never split mid-body), which is a real advantage of AST-based chunking over line-window chunking: no overlap parameter to tune because there's no arbitrary cut to compensate for.</p>
+      </div>
+
+      <h4 class="micro">Embedding &amp; vector store, concretely</h4>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Setting</th><th>Value</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">embeddings.model</td><td class="mono">sentence-transformers/all-MiniLM-L6-v2</td><td>Runs locally via <code class="inline">HuggingFaceEmbeddings</code> &mdash; no API key, no per-call cost, no network dependency for indexing. Small (~80MB) and fast enough for a single-machine dev tool; not chosen for maximum retrieval quality over a larger embedding model.</td></tr>
+          <tr><td class="mono">embeddings.dims</td><td class="mono">384</td><td>That model's native output size &mdash; declared once in <code class="inline">config.yaml</code> and read by every collection-creation call site (<code class="inline">context/indexers/*</code>, <code class="inline">memory/long_term.py</code>) so the code index and the long-term-memory collection agree with the embedder even though they're separate Qdrant collections.</td></tr>
+          <tr><td class="mono">Vector store</td><td class="mono">Qdrant (default) or Chroma</td><td>Provider-swappable via <code class="inline">vector_store.provider</code>, same factory pattern as the LLM (Section 14). Qdrant is the default because it's the one that supports this project's hybrid (dense+sparse) mode natively &mdash; Chroma here only does dense/semantic.</td></tr>
+          <tr><td class="mono">Similarity metric</td><td class="mono">Cosine</td><td><code class="inline">langchain_qdrant</code>'s own default distance for every collection this project creates (code index, long-term memory) &mdash; not overridden. Cosine is the standard choice for sentence-embedding similarity because it ignores vector magnitude and compares direction only, which matches how these embedding models are actually trained.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h4 class="micro">Hybrid retrieval: what kind, and how RRF actually fuses it</h4>
+      <p style="max-width:74ch">"Hybrid" here specifically means <b>dense + sparse, fused by Reciprocal Rank Fusion</b> &mdash; not a project-written algorithm, but Qdrant's own native Query API feature (<code class="inline">RetrievalMode.HYBRID</code> in <code class="inline">langchain_qdrant</code>, which issues one query with two prefetches and a fusion step, all server-side in a single round-trip):</p>
+      <ul class="pt tight">
+        <li><b>Dense leg:</b> the same 384-dim <code class="inline">all-MiniLM-L6-v2</code> embedding as everywhere else in this project &mdash; ranks chunks by cosine similarity, catches conceptual/semantic matches.</li>
+        <li><b>Sparse leg:</b> <code class="inline">FastEmbedSparse(model_name="Qdrant/bm25")</code> &mdash; a BM25 term-weighted index, ranks chunks by lexical/keyword overlap, catches exact identifiers a dense model might blur (<code class="inline">getUserById</code> vs. a semantically-similar-but-wrong function).</li>
+        <li><b>Fusion:</b> Qdrant runs both legs, gets back two independently-ranked lists, and combines them with <b>RRF</b> &mdash; this project doesn't pass a custom <code class="inline">hybrid_fusion</code>, so it's <code class="inline">langchain_qdrant</code>'s default (<code class="inline">FusionQuery(fusion=Fusion.RRF)</code>).</li>
+      </ul>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th colspan="4">RRF, step by step</th></tr></thead>
+        <tbody>
+          <tr><td colspan="4"><b>1. Formula:</b> for each document <i>d</i> that appears in either ranked list, <code class="inline">RRF_score(d) = Σ 1 / (k + rank_i(d))</code> summed across every list <i>i</i> it appears in (rank is 1-indexed; a document missing from a list contributes 0 for that list). Qdrant's default <code class="inline">k = 60</code> &mdash; the same constant the original RRF paper used &mdash; is not overridden here.</td></tr>
+          <tr><td colspan="4"><b>2. Why <i>rank</i>, not raw score:</b> cosine similarity and a BM25 score live on completely different, incomparable scales &mdash; there's no principled way to average a 0.82 cosine score with a 14.3 BM25 score directly. Rank position is scale-free: "1st place" means the same thing regardless of which scoring function produced it, so RRF sidesteps normalization entirely instead of trying to calibrate two unrelated distributions against each other.</td></tr>
+          <tr><td colspan="4"><b>3. Why <i>k</i> exists:</b> without it, rank 1 vs. rank 2 (<code class="inline">1/1</code> vs <code class="inline">1/2</code>, a 2&times; gap) would swing the fused score far more violently than rank 50 vs. rank 51 (<code class="inline">1/50</code> vs <code class="inline">1/51</code>, barely different) &mdash; a large <i>k</i> flattens that curve so one list's confident #1 pick doesn't automatically dominate a chunk the other list ranked more modestly but still reasonably.</td></tr>
+        </tbody>
+      </table></div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th colspan="4">4. Worked example &mdash; query: "how does config get loaded"</th></tr></thead>
+        <thead><tr><th>Chunk</th><th>Dense rank</th><th>Sparse (BM25) rank</th><th>RRF score (k=60)</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">config.py::load_config</td><td>1</td><td>3</td><td class="mono">1/61 + 1/63 = 0.0322</td></tr>
+          <tr><td class="mono">config.yaml (chunk)</td><td>2</td><td>1</td><td class="mono">1/62 + 1/61 = 0.0325</td></tr>
+          <tr><td class="mono">agent/factory.py::build_agent</td><td>3</td><td>&mdash; (not in top-N)</td><td class="mono">1/63 + 0 = 0.0159</td></tr>
+          <tr><td class="mono">README.md (chunk)</td><td>&mdash;</td><td>2</td><td class="mono">0 + 1/62 = 0.0161</td></tr>
+        </tbody>
+      </table></div>
+      <p style="font-size:12.5px; color:var(--ink-faint); max-width:74ch;">Illustrative ranks, not a captured real run. Note the outcome the mechanism is built for: <code class="inline">config.yaml</code> edges out <code class="inline">load_config</code> for the top spot purely because it placed well on <em>both</em> legs (2nd + 1st) rather than dominating one and missing the other entirely &mdash; RRF systematically rewards being decent everywhere over being great in exactly one signal.</p>
 
       <h4 class="micro">Freshness &mdash; four separate triggers, not one</h4>
       <pre class="mermaid">
@@ -591,6 +654,30 @@ sequenceDiagram
           </td><td>Structured <code class="inline">tool_calls</code> (native function-calling on the provider side) beats asking the model to emit an ad-hoc string like <code class="inline">"ACTION: search_codebase(query=...)"</code> and regex-parsing it &mdash; the provider guarantees the JSON matches the declared schema instead of this app having to defensively parse free text. It's also what makes the five-provider swap in Section 4 a config-only change: LangChain normalizes each provider's own function-calling wire format to this same <code class="inline">AIMessage.tool_calls</code> shape, so nothing downstream of <code class="inline">get_llm()</code> needs to know which provider actually answered.</td></tr>
         </tbody>
       </table></div>
+
+      <div class="callout"><span class="icon">Which model, and why</span>
+        <p>As actually configured (<code class="inline">config.yaml</code>): <code class="inline">llm.provider: openai</code>, <code class="inline">llm.model: gpt-4o-mini</code> &mdash; <b>128K context window, 16K max output tokens</b>, the cheapest tier in OpenAI's lineup ($0.15/M input, $0.60/M output as of this writing &mdash; see Section 17's cost breakdown). Chosen for a dev-tool workload: single user, mostly short <code class="inline">/ask</code> turns, cost-per-call matters more than frontier reasoning quality for "find this function and explain it."</p>
+        <p style="margin-top:8px"><b>Honest catch:</b> <code class="inline">llm.judge_model</code> is <em>also</em> <code class="inline">gpt-4o-mini</code> today &mdash; the same model as the main chat model. The judge-model <em>pattern</em> (Section 17: "a cheaper model for a narrower job") is real and the config knob to point it at something smaller exists, but as currently set it isn't actually saving anything &mdash; there's no cheaper model in the rotation to fall back to. Worth naming precisely rather than overselling the pattern as already paying off.</p>
+      </div>
+
+      <h4 class="micro">Context engineering: which of the five techniques this project actually uses</h4>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Technique</th><th>Used here?</th><th>Where / how</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">Selection</td><td><span class="col-good">✓ Yes</span></td><td>Choosing <em>what</em> enters context in the first place &mdash; <code class="inline">search_codebase</code>'s top-k retrieval (Section 4) and <code class="inline">recall</code>'s LTM lookup (Section 8) are both selection: pull in only the chunks/facts judged relevant to this turn, not everything available.</td></tr>
+          <tr><td class="mono">Compression</td><td><span class="col-good">✓ Yes</span></td><td><code class="inline">SummarizationMiddleware</code> (Section 8) &mdash; collapses older STM turns into a shorter summary once the conversation crosses 4,000 tokens, so history keeps costing roughly the same regardless of session length.</td></tr>
+          <tr><td class="mono">Ordering</td><td><span class="col-good">partial</span></td><td>Retrieved chunks are handed to the model in whatever rank order the retriever returned (RRF-fused rank, above) &mdash; the best match is already first, which is <em>consistent with</em> the lost-in-the-middle mitigation named in Section 4, but there's no deliberate re-ordering step (e.g. best-and-second-best pinned at the two ends of the block) beyond "rank order happens to put the best result first."</td></tr>
+          <tr><td class="mono">Pruning</td><td><span class="col-bad">✗ No</span></td><td>Real gap: the top-k chunks <code class="inline">search_codebase</code> returns all go into context as-is &mdash; no redundancy check (two chunks saying near-the-same-thing), no relevance-threshold cutoff (a k=5 result that's actually a poor match still gets included), no post-retrieval filtering pass at all.</td></tr>
+          <tr><td class="mono">Expansion</td><td><span class="col-bad">✗ No</span></td><td>Real gap, two forms neither of which this project does: <b>query expansion</b> (rewriting/broadening the user's question before retrieval, e.g. generating a few paraphrases and merging results) and <b>chunk expansion</b> (pulling in a retrieved chunk's immediate surrounding lines or parent function for extra context). Both are legitimate follow-ups, not implemented today.</td></tr>
+        </tbody>
+      </table></div>
+      <div class="callout warn"><span class="icon">Middleware / guardrails, honestly</span>
+        <p>The only middleware in this agent today is <code class="inline">SummarizationMiddleware</code> (compression, above) &mdash; there is no response-validation middleware (checking the final answer against some schema/policy before it reaches the user) and no safety/guardrail layer (content filtering, prompt-injection detection on retrieved chunks or tool output) beyond whatever the underlying provider does on its own. A real next step for a production version of this, not a gap to gloss over.</p>
+      </div>
+
+      <div class="callout"><span class="icon">Debugging query vs. "write new code" query &mdash; same flow, no special-casing</span>
+        <p>Both "why is this failing" and "add a feature that does X" go through the exact same <code class="inline">/ask</code> (single-turn, read-only, ReAct loop above) or <code class="inline">/plan</code> (multi-step, writes files, Section 12) path &mdash; there's no query classifier upstream that routes a debugging question differently from a feature request. The <b>only</b> routing decision in this project is the deterministic <code class="inline">/ask</code> vs. <code class="inline">/plan</code> command prefix (named below). Whether a given <code class="inline">/ask</code> reads as "debug this" or "explain this" is left entirely to the system prompt and the model's own judgment about which retrieved chunks matter &mdash; a fair "what would you add" answer if asked: a debug-specific prompt variant that also pulls in recent error logs/stack traces as part of retrieval would be a real, scoped enhancement, not built here.</p>
+      </div>
 
       <div class="callout"><span class="icon">Name it</span><p>That reasoning &harr; tool-call loop is the textbook <b>ReAct</b> pattern (Reason, Act, Observe, repeat) &mdash; and the <code class="inline">/ask</code> vs. <code class="inline">/plan</code> split one level up in <code class="inline">main.py</code> is <b>Routing</b>, just a deterministic command-prefix router rather than a learned/LLM classifier. Both get their full lineup of names in Section 13.</p></div>
     </section>
@@ -758,6 +845,7 @@ sequenceDiagram
         <li><b>Survive a crash without ambiguity</b> &mdash; state lives in SQLite (WAL mode), not memory; every transition is one atomic UPDATE.</li>
         <li><b>Resume exactly where it left off</b> &mdash; on restart, any task still <code class="inline">in_progress</code> is unconditionally orphaned (single-process serial execution means the process that owned it is simply gone) and reset to <code class="inline">pending</code> (retries left) or <code class="inline">failed</code> (exhausted) &mdash; no heartbeat mechanism needed.</li>
         <li><b>Reindex when it's done</b> &mdash; so <code class="inline">/ask</code> can immediately answer questions about files the plan just created (this is the "explicit reindex" trigger from Section 5).</li>
+        <li><b>Visibility into a run in progress</b> &mdash; <code class="inline">/task_status</code> reads the same SQLite state live, and every task-level tool call/state transition is logged (Section 15) &mdash; a long-running plan isn't a black box between "started" and "done."</li>
       </ul>
       <pre class="mermaid">
 stateDiagram-v2
@@ -897,9 +985,39 @@ stateDiagram-v2
 
       <h3 class="sub"><span class="chip">Cost</span>Cost optimization</h3>
       <ul class="pt tight">
-        <li><b>Prompt/KV caching &mdash; a real, unclaimed opportunity here.</b> The system prompt + tool definitions + the skills index (Section 11) are largely static across an entire session. Marking that block cacheable (Anthropic requires explicit <code class="inline">cache_control</code> breakpoints; OpenAI detects repeated prefixes implicitly) turns every call after the first into a cache-hit-priced call for that block &mdash; roughly a <b>0.1&times;</b> multiplier on that portion versus full price, against a <b>1.25&times;</b> multiplier paid once on the first call to write it. Not yet done in this project.</li>
-        <li><b>The judge-model pattern, generalized.</b> <code class="inline">llm.judge_model</code> already uses a cheaper model for a narrower job (score a task against acceptance criteria) &mdash; the same pattern could grade <code class="inline">/ask</code> answers for faithfulness without paying full-model price for every check.</li>
+        <li><b>Prompt/KV caching &mdash; a real, unclaimed opportunity here.</b> The system prompt + tool definitions + the skills index (Section 11) are largely static across an entire session. Not yet done in this project &mdash; it costs nothing to enable on OpenAI (automatic, see below) and would need explicit <code class="inline">cache_control</code> breakpoints to enable on Anthropic.</li>
+        <li><b>The judge-model pattern exists but isn't paying off yet.</b> <code class="inline">llm.judge_model</code> is a separate config knob for "use a cheaper model for a narrower job," but as currently set (Section 7) it's the same model as <code class="inline">llm.model</code> &mdash; pointing it at an actually-cheaper tier is the real optimization, not something already banked.</li>
         <li><b>Watch the parallelism gotcha.</b> Firing several cacheable calls at once, before the first has finished <em>writing</em> the cache, means none of them get the hit price &mdash; they all race past an empty cache. A single sequential warm-up call first avoids this.</li>
+      </ul>
+
+      <h4 class="micro">Prompt caching, worked out for this project's actual model (<code class="inline">gpt-4o-mini</code>)</h4>
+      <p style="max-width:74ch">OpenAI's prompt caching is <b>fully automatic</b> &mdash; no <code class="inline">cache_control</code> flags, no opt-in call. Any prompt prefix &ge;1,024 tokens that exactly repeats across calls is cached transparently, in 128-token increments, and stays warm for roughly 5&ndash;10 minutes of inactivity (longer, up to about an hour, off-peak). This project's static prefix &mdash; system prompt + ~46 tool schemas (Section 3/10) &mdash; is comfortably over that 1,024-token floor, so caching would engage on the very first repeat call with zero code changes, the moment it's worth measuring.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th></th><th class="mono">gpt-4o-mini (this project)</th><th class="mono">Claude Sonnet 5 (for comparison)</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">Input (normal)</td><td>$0.15 / M tokens</td><td>$2.00 / M tokens</td></tr>
+          <tr><td class="mono">Output</td><td>$0.60 / M tokens</td><td>$10.00 / M tokens</td></tr>
+          <tr><td class="mono">Cache write</td><td>No extra charge &mdash; automatic</td><td>1.25&times; normal (5-min TTL) &mdash; $2.50 / M</td></tr>
+          <tr><td class="mono">Cache read (hit)</td><td>$0.075 / M &mdash; <b>0.5&times;</b> normal</td><td>$0.20 / M &mdash; <b>0.1&times;</b> normal</td></tr>
+          <tr><td class="mono">Enable how</td><td>Automatic, no code</td><td>Explicit <code class="inline">cache_control</code> breakpoint in the request</td></tr>
+        </tbody>
+      </table></div>
+      <p style="font-size:12.5px; color:var(--ink-faint); max-width:74ch;">Pricing as of this writing; check current rates before relying on this. <a href="https://developers.openai.com/api/docs/guides/prompt-caching" target="_blank" rel="noopener">OpenAI prompt caching docs</a>, <a href="https://platform.claude.com/docs/en/about-claude/pricing" target="_blank" rel="noopener">Claude pricing</a>.</p>
+
+      <p style="max-width:74ch">Worked example &mdash; assume a ~4,000-token static prefix (system prompt + tool schemas, illustrative) plus ~1,500 tokens of dynamic input (question + retrieved chunks, uncacheable since it differs every call) and a ~300-token answer, repeated over one session:</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th></th><th>1 request</th><th>10 requests, no cache</th><th>10 requests, with cache</th></tr></thead>
+        <tbody>
+          <tr><td class="mono"><b>gpt-4o-mini</b></td><td>$0.00101</td><td>$0.01005</td><td>$0.00735 <span class="col-good">(&minus;27%)</span></td></tr>
+          <tr><td class="mono"><b>Claude Sonnet 5</b></td><td>$0.01400</td><td>$0.14000</td><td>$0.07720 <span class="col-good">(&minus;45%)</span></td></tr>
+        </tbody>
+      </table></div>
+      <p style="max-width:74ch">The relative saving is bigger on Claude despite Claude costing ~13&times; more per token in absolute terms &mdash; because its cache-read multiplier (0.1&times;) is steeper than gpt-4o-mini's (0.5&times;). Concretely: OpenAI's mini-tier caching still leaves the cached portion at half price, while Claude's drops it to a tenth. The intuition "caching is obviously worth it" holds for both providers here; <em>how much</em> it's worth depends on the specific provider's cache-read multiplier, not just on caching existing at all &mdash; worth stating precisely rather than as a blanket "caching = cheaper" claim. Savings also compound with session length: a long <code class="inline">/ask</code> conversation (Section 7's STM) reuses that same static prefix on every turn, so the percentage saved only grows as a session goes on.</p>
+
+      <h4 class="micro">Caching layers beyond the response cache, for a hosted version</h4>
+      <ul class="pt tight">
+        <li><b>Tool-invocation caching</b> &mdash; not done here. A read-only MCP/tool call with the exact same arguments (e.g. <code class="inline">recall("error handling style")</code> called twice in one session) currently re-runs in full each time; caching by (tool name, args) for read-only tools would be safe and cheap to add.</li>
+        <li><b>Workflow/session-level caching</b> &mdash; partially present without being framed as a cache: the STM checkpointer (Section 7) already persists a session's full state so a resumed thread doesn't recompute anything, and <code class="inline">tasks.db</code> persists <code class="inline">/plan</code> progress the same way. Neither was built <em>as</em> a cache, but both serve the same purpose &mdash; avoid redoing work already done for this session/workflow.</li>
       </ul>
 
       <h3 class="sub"><span class="chip">Latency</span>Caching at every layer, not just one</h3>
@@ -999,7 +1117,8 @@ flowchart TD
         <li><b>SQLite &rarr; Postgres for task/session state.</b> WAL mode is genuinely fine for one writer + concurrent readers on one machine; it doesn't help once multiple app instances need to see the same task queue across a network.</li>
         <li><b>Separate the API process from <code class="inline">/plan</code> execution.</b> A long-running task shouldn't block a request/response HTTP cycle &mdash; move task execution to a background worker process, with the API only enqueuing and polling status.</li>
         <li><b>Tenant isolation on the vector store.</b> Either a dedicated Qdrant collection per customer (strongest isolation, doesn't scale past a handful of tenants) or one shared collection with a mandatory, server-derived <code class="inline">tenant_id</code> metadata filter baked into the query path itself &mdash; never trusted from client input, enforced at both the application layer and the DB-query layer so one missed filter clause can't become a cross-tenant data leak.</li>
-        <li><b>Every prompt/model/retrieval change ships through the rollout ladder</b> from Section 16 &mdash; offline eval gate, then shadow, then canary &mdash; rather than straight to 100% of a live customer base.</li>
+        <li><b>Every prompt/model/retrieval change ships through the rollout ladder</b> from Section 17 &mdash; offline eval gate, then shadow, then canary &mdash; rather than straight to 100% of a live customer base.</li>
+        <li><b>Shadow/canary vs. blue-green &mdash; different axis, both apply.</b> Shadow&rarr;canary (Section 17) is about <em>how much traffic</em> a new prompt/model/retrieval version sees before full rollout. <b>Blue-green</b> (two full environments, an instant traffic-switch between them) is a separate, orthogonal concern &mdash; how a <em>code/infra</em> deploy gets swapped in with zero downtime. Not needed at today's single-instance scale; would matter once this API has more than one running instance to cut over between.</li>
       </ul>
     </section>
 
@@ -1027,7 +1146,11 @@ flowchart TD
         <div class="term"><dt>MCP</dt><dd>Model Context Protocol &mdash; a standard for LLM apps to talk to external tool servers over a common (often stdio/JSON-RPC) interface.</dd></div>
         <div class="term"><dt>STM / LTM</dt><dd>Short-term memory (this conversation) vs. long-term memory (facts that outlive any one conversation).</dd></div>
         <div class="term"><dt>Hybrid retrieval</dt><dd>Combining dense (embedding/cosine) search with sparse (BM25/keyword) search so both meaning and exact terms are found.</dd></div>
+        <div class="term"><dt>RRF</dt><dd>Reciprocal Rank Fusion &mdash; combines two independently-ranked result lists (here: dense + sparse) by rank position, not raw score, since the two scores aren't on comparable scales. <code class="inline">score = &Sigma; 1/(k + rank)</code>.</dd></div>
         <div class="term"><dt>HNSW</dt><dd>Hierarchical Navigable Small World &mdash; the approximate-nearest-neighbour index structure behind fast vector search.</dd></div>
+        <div class="term"><dt>Context engineering</dt><dd>Deliberately managing what enters an LLM's context window and in what shape &mdash; selection (what to include), compression (summarizing to fit), ordering (placement within the window), pruning (cutting redundant/low-value content), expansion (broadening a query or a retrieved chunk with more surrounding context).</dd></div>
+        <div class="term"><dt>Agent harness</dt><dd>The outer loop that turns a bare LLM into an agent: send messages + tool schemas in, get a tool call or a final answer out, execute the tool, repeat. This project's own harness is <code class="inline">main.py</code>'s REPL plus LangChain's <code class="inline">create_agent</code> loop &mdash; not a separate framework/product, just what those two pieces do together.</dd></div>
+        <div class="term"><dt>Golden set</dt><dd>A small, hand-verified set of (input, correct output) pairs &mdash; e.g. (question, correct source chunk) for retrieval &mdash; used as a fixed benchmark to score changes against, so "did this prompt/retrieval tweak help or hurt" has a measurable answer instead of a vibe check.</dd></div>
         <div class="term"><dt>Checkpointer</dt><dd>LangGraph's mechanism for persisting an agent's conversation state between calls, keyed by thread ID.</dd></div>
         <div class="term"><dt>DAG</dt><dd>Directed Acyclic Graph &mdash; here, tasks with dependencies but no circular waits.</dd></div>
         <div class="term"><dt>Debounce</dt><dd>Wait until events stop arriving before acting &mdash; avoids reacting to every intermediate filesystem event from a single save.</dd></div>
